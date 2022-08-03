@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<extension version="2.5" type="plugin" method="upgrade" group="vmpayment">
+    <name>Reepay Payment Gateway for Virtuemart</name>
+    <creationDate>July 2022</creationDate>
+    <author>Reepay</author>
+    <authorUrl>https://reepay.eu</authorUrl>
+    <copyright>Copyright (C) 2022 Reepay All rights reserved.</copyright>
+    <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
+    <version status="final">1.0.0</version>
+    <description><![CDATA[Payment module for Joomla Virtuemart]]></description>
+    <files>
+        <filename plugin="reepay">reepay.php</filename>
+        <folder>language</folder>
+	<folder>reepay</folder>		
+    </files>
+
+    <vmconfig>
+        <fields name="params">
+
+            <fieldset name="payment" addfieldpath="/plugins/vmpayment/reepay/reepay/fields">
+                <field type="webhookLink" name="webhookLink" label="VMPAYMENT_REEPAY_WEBHOOK" description="VMPAYMENT_REEPAY_WEBHOOK_DESCRIPTION" />
+
+                <field type="text" name="private_key_test" size="50" label="VMPAYMENT_REEPAY_PRIVATE_KEY_TEST" default="" description="" />
+                <field type="text" name="private_key_live" size="50" label="VMPAYMENT_REEPAY_PRIVATE_KEY_LIVE" default="" description="" />
+
+                <field name="status_authorized" type="vmorderstate" scope="com_virtuemart" default="U"
+                       label="VMPAYMENT_REEPAY_STATUS_PAYMENT_AUTHORIZED" description="VMPAYMENT_REEPAY_STATUS_PAYMENT_AUTHORIZED_TIP"/>
+
+                <field name="status_settled" type="vmorderstate" scope="com_virtuemart" default="C"
+                       label="VMPAYMENT_REEPAY_STATUS_PAYMENT_SETTLED" description="VMPAYMENT_REEPAY_STATUS_PAYMENT_SETTLED_TIP"/>
+
+                <field name="status_cancelled" type="vmorderstate" scope="com_virtuemart" default="X"
+                       label="VMPAYMENT_REEPAY_STATUS_PAYMENT_CANCELLED" description="VMPAYMENT_REEPAY_STATUS_PAYMENT_CANCELLED_TIP"/>
+
+                <field name="status_refunded" type="vmorderstate" scope="com_virtuemart" default="R"
+                       label="VMPAYMENT_REEPAY_STATUS_PAYMENT_REFUNDED" description="VMPAYMENT_REEPAY_STATUS_PAYMENT_REFUNDED_TIP"/>
+
+                <field name="instant_settle" type="radio" scope="com_virtuemart" default="0"
+                       label="VMPAYMENT_REEPAY_INSTANT_SETTLE"
+                       description="VMPAYMENT_REEPAY_INSTANT_SETTLE_DESCRIPTION">
+                    <option value="0">COM_VIRTUEMART_NO</option>
+                    <option value="1">COM_VIRTUEMART_YES</option>
+                </field>
+
+                <field name="test_mode" type="radio" scope="com_virtuemart" default="1"
+                       label="VMPAYMENT_REEPAY_TEST_MODE"
+                       description="VMPAYMENT_REEPAY_TEST_MODE_DESCRIPTION">
+                    <option value="0">COM_VIRTUEMART_NO</option>
+                    <option value="1">COM_VIRTUEMART_YES</option>
+                </field>
+
+                <field
+                        name="reepay_paytypes"
+                        type="list"
+                        label="VMPAYMENT_REEPAY_PAYMENT_METHODS"
+                        description="VMPAYMENT_REEPAY_PAYMENT_METHODS_DESCRIPTION"
+                        default="show"
+                        validate="options"
+                        multiple="true"
+                >
+                    <option value="card">All available debit / credit cards</option>
+                    <option value="dankort">Dankort</option>
+                    <option value="visa">VISA</option>
+
+                    <option value="visa_elec">VISA Electron</option>
+                    <option value="mc">MasterCard</option>
+                    <option value="amex">American Express</option>
+
+                    <option value="mobilepay">MobilePay Online</option>
+                    <option value="viabill">ViaBill</option>
+                    <option value="resurs">Resurs Bank</option>
+
+                    <option value="swish">Swish</option>
+                    <option value="vipps">Vipps</option>
+                    <option value="diners">Diners Club</option>
+
+                    <option value="maestro">Maestro</option>
+                    <option value="laser">Laser</option>
+                    <option value="discover">Discover</option>
+
+                    <option value="jcb">JCB</option>
+                    <option value="china_union_pay">China Union Pay</option>
+                    <option value="ffk">Forbrugsforeningen</option>
+
+                    <option value="paypal">PayPal</option>
+                    <option value="applepay">Apple Pay</option>
+                    <option value="googlepay">Google Pay</option>
+                </field>
+
+                <field name="payment_logos" type="imagelist" label="VMPAYMENT_REEPAY_LOGOS" multiple="true"
+                       description="VMPAYMENT_REEPAY_LOGOS_TIP" scope=""
+                       directory="images/virtuemart/payment"
+                       default="" hide_default="1" hide_none="1"
+                       stripext="0" exclude="^_"/>
+            </fieldset>
+        </fields>
+    </vmconfig>
+</extension>

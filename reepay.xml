@@ -12,6 +12,7 @@
         <filename plugin="reepay">reepay.php</filename>
         <folder>language</folder>
 	<folder>reepay</folder>		
+	<folder>tmpl</folder>
     </files>
 
     <vmconfig>

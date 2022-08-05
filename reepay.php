@@ -16,7 +16,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
         $this->_tablepkey = 'id';
         $this->_tableId = 'id';
         $varsToPush = $this->getVarsToPush ();
-        $this->addVarsToPushCore($varsToPush,1);
+        //$this->addVarsToPushCore($varsToPush,1);
         $this->setConfigParameterable ($this->_configTableFieldName, $varsToPush);
     }
 
@@ -44,7 +44,6 @@ class plgVmPaymentReepay extends vmPSPlugin {
     }
 
     function plgVmConfirmedOrder($cart, $order) {
-
         $cartHash =  $cart->getCartHash();
 
         if (!($method = $this->getVmPluginMethod($order['details']['BT']->virtuemart_paymentmethod_id))) {
@@ -139,15 +138,43 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $html = '';
 
-            vmJsApi::addJScript('vm.paymentFormAutoSubmit', '
-            jQuery(document).ready(function($){
-                    jQuery("body").addClass("vmLoading");
-                    var msg="'.vmText::_('VMPAYMENT_REEPAY_REDIRECT_MESSAGE').'";
-                    jQuery("body").append("<div class=\"vmLoadingDiv\"><div class=\"vmLoadingDivMsg\"></div></div>");
-            window.setTimeout("jQuery(\'.vmLoadingDiv\').hide();",3000);
-            window.setTimeout("window.location.replace(\'' . $result['body']['url'] . '\');", 400);
-            })
-          ');
+            $checkout_type = current($method->checkout_type);
+
+            if( 'overlay' == $checkout_type ) {
+                $reepayJsLib = 'https://checkout.reepay.com/checkout.js';
+                JHtml::_('script', $reepayJsLib, array('version' => 'auto', 'relative' => true));
+
+                $invoiceHandle  = $result['body']['id'];
+                $concel_url = $input['cancel_url'];;
+                $accept_url = $input['accept_url'];
+
+                $pm = $method->virtuemart_paymentmethod_id;
+                $invoice =  $order['details']['BT']->order_number;
+
+                $html .= "<script> 
+                            var rp = new Reepay.ModalCheckout('$invoiceHandle');
+                            rp.addEventHandler(Reepay.Event.Accept, function(data) {
+                                 window.location.href = '$accept_url&invoice=$invoice&pm=$pm';
+                            });
+                
+                            rp.addEventHandler(Reepay.Event.Cancel, function(data) {
+                                 window.location.href = '$concel_url';
+                            });
+                            
+                            
+                          </script>";
+
+            } else {
+                    vmJsApi::addJScript('vm.paymentFormAutoSubmit', '
+                    jQuery(document).ready(function($){
+                            jQuery("body").addClass("vmLoading");
+                            var msg="'.vmText::_('VMPAYMENT_REEPAY_REDIRECT_MESSAGE').'";
+                            jQuery("body").append("<div class=\"vmLoadingDiv\"><div class=\"vmLoadingDivMsg\"></div></div>");
+                    window.setTimeout("jQuery(\'.vmLoadingDiv\').hide();",3000);
+                    window.setTimeout("window.location.replace(\'' . $result['body']['url'] . '\');", 400);
+                    })
+                  ');
+            }
 
         } else {
 
@@ -201,6 +228,9 @@ class plgVmPaymentReepay extends vmPSPlugin {
     }
 
     function plgVmOnPaymentResponseReceived(&$html) {
+        if (!class_exists('VirtueMartModelOrders')) {
+            require(VMPATH_ADMIN . DS . 'models' . DS . 'orders.php');
+        }
         $virtuemart_order_id = VirtueMartModelOrders::getOrderIdByOrderNumber(vRequest::getString('invoice'));
         $payment_data = $this->getDataByOrderId($virtuemart_order_id);
 
@@ -222,11 +252,6 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         // check if order has not already been updated with webhook
         if ('pending' == $payment_data->payment_status) {
-
-            if (!class_exists('VirtueMartModelOrders')) {
-                require(VMPATH_ADMIN . DS . 'models' . DS . 'orders.php');
-            }
-
             // the payment itself should send the parameter needed.
             $virtuemart_paymentmethod_id = vRequest::getInt('pm', 0);
             if (!$virtuemart_paymentmethod_id) {
@@ -477,7 +502,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
           if ($order->order_status == $method->status_refunded && 'settled' == $invoice['body']['state']) {
               vmdebug('attempt to refund on Reepay gateway', ['invoice' => $order->order_number, 'amount' => $order->paid]);
-              $result = $reepayService->refund($order->order_number, $order->paid);
+              $result = $reepayService->refund($order->order_number, $order->order_total);
               if ($result['status'] == 'success') {
                   JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMENT_REEPAY_ORDER_REFUND_FLASH_MESSAGE_SUCCESS'));
                    $orderHistory['comments'] = vmText::_('VMPAYMENT_REEPAY_ORDER_REFUND_FLASH_MESSAGE_SUCCESS');
@@ -524,6 +549,4 @@ class plgVmPaymentReepay extends vmPSPlugin {
       }
 
     }
-
 }
-

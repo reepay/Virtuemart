@@ -5,5 +5,6 @@ To install payment plugin just download it from this repository and
 install on your joomla webshop.
 On this page click button Code and they Download ZIP
 
-## Supported versions of Virtuemart
-The plugin supports Virtuemart version >= 3.6.0
+## Requirements
+ - Joomla Virtuemart >= 3.6.0
+ - php >= 7.0

@@ -11,7 +11,7 @@
     <files>
         <filename plugin="reepay">reepay.php</filename>
         <folder>language</folder>
-	<folder>reepay</folder>		
+	<folder>reepay</folder>
 	<folder>tmpl</folder>
     </files>
 
@@ -19,6 +19,19 @@
         <fields name="params">
 
             <fieldset name="payment" addfieldpath="/plugins/vmpayment/reepay/reepay/fields">
+                <field
+                        name="checkout_type"
+                        type="list"
+                        label="VMPAYMENT_REEPAY_CHECKOUT_TYPE"
+                        description="VMPAYMENT_REEPAY_CHEKCOUT_TYPE_DESCRIPTION"
+                        default="window"
+                        validate="options"
+                        multiple="true"
+                >
+                    <option value="window">Window</option>
+                    <option value="overlay">Overlay</option>
+                </field>
+
                 <field type="webhookLink" name="webhookLink" label="VMPAYMENT_REEPAY_WEBHOOK" description="VMPAYMENT_REEPAY_WEBHOOK_DESCRIPTION" />
 
                 <field type="text" name="private_key_test" size="50" label="VMPAYMENT_REEPAY_PRIVATE_KEY_TEST" default="" description="" />
@@ -59,7 +72,7 @@
                         validate="options"
                         multiple="true"
                 >
-                    <option value="card">All available debit / credit cards</option>
+                    <option value="card">All available debit/ credit cards</option>
                     <option value="dankort">Dankort</option>
                     <option value="visa">VISA</option>
 

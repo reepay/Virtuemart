@@ -311,6 +311,79 @@ class plgVmPaymentReepay extends vmPSPlugin {
         return true;
     }
 
+    function plgVmOnPaymentNotification() {
+        $input = JFactory::getApplication()->input->json;
+        $invoiceHandle =  $input->get('invoice');
+
+        if( empty( $invoiceHandle ) ) {
+            return NULL;
+        }
+
+        $virtuemart_paymentmethod_id = vRequest::getInt('pm', 0);
+        if (!$virtuemart_paymentmethod_id) {
+            return;
+        }
+
+        if (!($method = $this->getVmPluginMethod($virtuemart_paymentmethod_id))) {
+            return NULL; // Another method was selected, do nothing
+        }
+
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_service.php';
+
+        $privateKey = (intval($method->test_mode) == 0) ?
+        $method->private_key_live : $method->private_key_test;
+
+        $reepayService = new ReepayService(trim($privateKey));
+
+        // check if invoice exists in Reepay
+        $invoice = $reepayService->getInvoice($invoiceHandle);
+
+        if(empty($invoice) ) {
+           return NULL;
+        }
+
+        if ($invoice['status'] !== 'success' || !in_array($invoice['body']['state'], ['authorized', 'settled'])) {
+            return FALSE;
+        }
+
+        $virtuemart_order_id = VirtueMartModelOrders::getOrderIdByOrderNumber($invoiceHandle);
+
+        $payment_data = $this->getDataByOrderId($virtuemart_order_id);
+
+        if( is_object($payment_data) && 'pending' === $payment_data->payment_status) {
+
+            $orderHistory['customer_notified'] = 1;
+
+            if ($method->instant_settle == 1) {
+                $orderHistory['order_status'] = $method->status_settled;
+                $orderHistory['comments'] = 'Webhook from Reepay gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_SETTLED');
+
+            } else {
+                $orderHistory['order_status'] = $method->status_authorized;
+                $orderHistory['comments'] = 'Webhook from Reepay gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_AUTHORIZED');
+            }
+
+            $modelOrder = VmModel::getModel('orders');
+
+            $modelOrder->updateStatusForOneOrder($virtuemart_order_id, $orderHistory, false);
+
+            $response_fields['virtuemart_order_id'] = $virtuemart_order_id;
+            $response_fields['payment_status'] = $invoice['body']['state'];
+
+            $payment_data = $this->getDataByOrderId($virtuemart_order_id);
+
+            $response_fields['id'] = $payment_data->id;
+
+            $this->storePSPluginInternalData($response_fields, 'id', true);
+
+            $cart = VirtueMartCart::getCart();
+
+            $cart->emptyCart();
+
+        }
+
+    }
+
     /**
      * This method is fired when showing the order details in the frontend.
      * It displays the method-specific data.

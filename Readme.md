@@ -6,5 +6,5 @@ install on your joomla webshop.
 On this page click button Code and they Download ZIP
 
 ## Requirements
- - Joomla Virtuemart >= 3.6.0
+ - Joomla Virtuemart >= 3.2.0
  - php >= 7.0

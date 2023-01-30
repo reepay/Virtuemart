@@ -6,7 +6,7 @@
     <authorUrl>https://reepay.eu</authorUrl>
     <copyright>Copyright (C) 2022 Reepay All rights reserved.</copyright>
     <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
-    <version status="final">1.0.0</version>
+    <version status="final">1.0.1</version>
     <description><![CDATA[Payment module for Joomla Virtuemart]]></description>
     <files>
         <filename plugin="reepay">reepay.php</filename>
@@ -75,7 +75,7 @@
                     <option value="card">All available debit/ credit cards</option>
                     <option value="dankort">Dankort</option>
                     <option value="visa">VISA</option>
-
+		    <option value="anyday">Anyday</option>
                     <option value="visa_elec">VISA Electron</option>
                     <option value="mc">MasterCard</option>
                     <option value="amex">American Express</option>

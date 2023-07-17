@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <extension version="2.5" type="plugin" method="upgrade" group="vmpayment">
-    <name>Reepay Payment Gateway for Virtuemart</name>
+    <name>Billwerk+ Payments Gateway for Virtuemart</name>
     <creationDate>July 2022</creationDate>
-    <author>Reepay</author>
+    <author>Billwerk+ Payments</author>
     <authorUrl>https://reepay.eu</authorUrl>
-    <copyright>Copyright (C) 2022 Reepay All rights reserved.</copyright>
+    <copyright>Copyright (C) 2022 Billwerk+ Payments All rights reserved.</copyright>
     <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
-    <version status="final">1.0.1</version>
+    <version status="final">1.1.0</version>
     <description><![CDATA[Payment module for Joomla Virtuemart]]></description>
     <files>
         <filename plugin="reepay">reepay.php</filename>

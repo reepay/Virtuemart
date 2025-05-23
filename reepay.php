@@ -275,7 +275,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $reepayService = new ReepayService(trim($privateKey));
 
-            // check if invoice exists in Billwerk+ Payments
+            // check if invoice exists in Frisbii Payments
             $invoice = $reepayService->getInvoice(vRequest::getString('invoice'));
 
             if ($invoice['status'] !== 'success' || !in_array($invoice['body']['state'], ['authorized', 'settled'])) {
@@ -360,7 +360,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         $reepayService = new ReepayService(trim($privateKey));
 
-        // check if invoice exists in Billwerk+ Payments
+        // check if invoice exists in Frisbii Payments
         $invoice = $reepayService->getInvoice($invoiceHandle);
 
         if(empty($invoice) ) {
@@ -381,11 +381,11 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             if ($method->instant_settle == 1) {
                 $orderHistory['order_status'] = $method->status_settled;
-                $orderHistory['comments'] = 'Webhook from Billwerk+ Payments gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_SETTLED');
+                $orderHistory['comments'] = 'Webhook from Frisbii Payments gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_SETTLED');
 
             } else {
                 $orderHistory['order_status'] = $method->status_authorized;
-                $orderHistory['comments'] = 'Webhook from Billwerk+ Payments gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_AUTHORIZED');
+                $orderHistory['comments'] = 'Webhook from Frisbii Payments gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_AUTHORIZED');
             }
 
             $modelOrder = VmModel::getModel('orders');
@@ -495,20 +495,20 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
       vmdebug('plgVmOnUpdateOrderPayment invoice', $invoice);
 
-      // we have this invoice in Billwerk+ Payments system
+      // we have this invoice in Frisbii Payments system
       if('success' == $invoice['status']) {
 
           $modelOrder = VmModel::getModel('orders');
 
           if ($order->order_status == $method->status_refunded && 'settled' == $invoice['body']['state']) {
-              vmdebug('attempt to refund on Billwerk+ Payments gateway', ['invoice' => $order->order_number, 'amount' => $order->paid]);
+              vmdebug('attempt to refund on Frisbii Payments gateway', ['invoice' => $order->order_number, 'amount' => $order->paid]);
               $result = $reepayService->refund($order->order_number, $order->order_total);
               if ($result['status'] == 'success') {
                   JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMENT_REEPAY_ORDER_REFUND_FLASH_MESSAGE_SUCCESS'));
                    $orderHistory['comments'] = vmText::_('VMPAYMENT_REEPAY_ORDER_REFUND_FLASH_MESSAGE_SUCCESS');
                    $orderHistory['order_status'] = $method->status_refunded;
                    $modelOrder->updateStatusForOneOrder($order->virtuemart_order_id, $orderHistory, false);
-                  vmdebug('refund was successful on Billwerk+ Payments gateway');
+                  vmdebug('refund was successful on Frisbii Payments gateway');
               } else {
                   JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMETN_REEPAY_ORDER_REFUND_FLASH_MESSAGE_FAIL') . $result['error'], 'warning');
                   vmdebug('refund failed on gateway ', $result['error']);
@@ -516,7 +516,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
           }
 
           if ($order->order_status == $method->status_settled && 'authorized' == $invoice['body']['state']) {
-              vmdebug('attempt to settle on Billwerk+ Payments gateway', ['invoice' => $order->order_number, 'amount' => $order->order_total]);
+              vmdebug('attempt to settle on Frisbii Payments gateway', ['invoice' => $order->order_number, 'amount' => $order->order_total]);
               $result = $reepayService->settle($order->order_number, $order->order_total);
               if ($result['status'] == 'success') {
                   JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMENT_REEPAY_ORDER_SETTLE_FLASH_MESSAGE_SUCCESS'));
@@ -525,15 +525,15 @@ class plgVmPaymentReepay extends vmPSPlugin {
                   $orderHistory['order_status'] = $method->status_settled;
                   $modelOrder->updateStatusForOneOrder($order->virtuemart_order_id, $orderHistory, false);
 
-                  vmdebug('settle was successful on Billwerk+ Payments gateway');
+                  vmdebug('settle was successful on Frisbii Payments gateway');
               } else {
-                  vmdebug('settle failed on Billwerk+ Payments gateway ', $result['error']);
+                  vmdebug('settle failed on Frisbii Payments gateway ', $result['error']);
                   JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMETN_REEPAY_ORDER_SETTLE_FLASH_MESSAGE_FAIL') . $result['error'], 'warning');
               }
           }
 
           if ($order->order_status == $method->status_cancelled && 'authorized' == $invoice['body']['state']) {
-              vmdebug('attempt to void on Billwerk+ Payments gateway', ['invoice' => $order->order_number]);
+              vmdebug('attempt to void on Frisbii Payments gateway', ['invoice' => $order->order_number]);
               $result = $reepayService->void($order->order_number);
               if ($result['status'] == 'success') {
                   JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMENT_REEPAY_ORDER_CANCEL_FLASH_MESSAGE_SUCCESS'));

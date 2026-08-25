@@ -1,8 +1,8 @@
-=== Frisbii Pay ===
+# Frisbii Pay
 Lastest version: 1.2.1
 
-# Joomla Virtuemart
-Payment Plugin for Joomla Virtuemart 3.x, 4.x and 5.x
+## Joomla Virtuemart
+Payment Plugin for Joomla Virtuemart 3.x and 4.x
 
 ## Installation 
 1. Download the .zip file from https://github.com/reepay/Virtuemart/releases
@@ -18,7 +18,7 @@ Payment Plugin for Joomla Virtuemart 3.x, 4.x and 5.x
  - Joomla Virtuemart >= 3.2.0 (also might work on lower versions but has not been tested)
  - php >= 7.0
 
- == Changelog ==
+## Changelog
 v 1.2.1
 - [Fix] - Fixed fatal error on PHP 8+ when calling API requests without parameters (e.g. getWebhooks()).
 - [Docs] - Updated Readme with detailed step-by-step installation guide for Joomla.

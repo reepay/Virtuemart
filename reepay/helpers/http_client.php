@@ -16,7 +16,7 @@ class Client {
 
     }
 
-    public function request ($url, array $params = null) {
+    public function request ($url, array $params = []) {
 
         curl_setopt_array($this->ch, [
             CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_1_1,

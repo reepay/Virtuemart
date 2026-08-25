@@ -6,7 +6,7 @@
     <authorUrl>https://reepay.eu</authorUrl>
     <copyright>Copyright (C) 2022 Frisbii Payments All rights reserved.</copyright>
     <license>http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL</license>
-    <version status="final">1.2.0</version>
+    <version status="final">1.2.1</version>
     <description><![CDATA[Payment module for Joomla Virtuemart]]></description>
     <files>
         <filename plugin="reepay">reepay.php</filename>

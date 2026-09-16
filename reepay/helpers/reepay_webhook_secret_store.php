@@ -46,13 +46,26 @@ class ReepayWebhookMethodSecretStore implements ReepayWebhookSecretStoreInterfac
     {
         $this->method->{$this->secretField} = $secret;
         $this->method->{$this->expiresField} = call_user_func($this->now) + $ttlSeconds;
-        $this->method->store();
+        $this->storeExistingRow();
     }
 
     public function invalidate()
     {
         $this->method->{$this->secretField} = '';
         $this->method->{$this->expiresField} = 0;
+        $this->storeExistingRow();
+    }
+
+    /**
+     * VmTable::load() leaves $_update reset to null (bind() clears it right after
+     * load() sets it), so a plain store() re-runs check() - including the payment_name
+     * slug-uniqueness lookup, which errors on installs whose paymentmethods table
+     * predates that column. $method here is always an already-loaded, existing row,
+     * never a new one, so it's safe to tell VmTable that directly and skip check().
+     */
+    private function storeExistingRow()
+    {
+        $this->method->_update = true;
         $this->method->store();
     }
 }

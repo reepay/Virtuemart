@@ -339,14 +339,19 @@ class plgVmPaymentReepay extends vmPSPlugin {
     function plgVmOnPaymentNotification() {
         $input = JFactory::getApplication()->input->json;
         $payload = json_decode($input->getRaw(), true);
+        $remoteAddr = JFactory::getApplication()->input->server->getString('REMOTE_ADDR', 'unknown');
 
         if (!is_array($payload)) {
+            $this->logWebhook('Rejected: request body is not valid JSON. remote=' . $remoteAddr, 'warning');
             return NULL;
         }
 
         $invoiceHandle = isset($payload['invoice']) ? $payload['invoice'] : null;
+        $eventType = isset($payload['event_type']) ? $payload['event_type'] : 'unknown';
+        $eventId = isset($payload['id']) ? $payload['id'] : 'unknown';
 
         if( empty( $invoiceHandle ) ) {
+            $this->logWebhook('Rejected: missing invoice field. event_type=' . $eventType . ', id=' . $eventId . ', remote=' . $remoteAddr, 'warning');
             return NULL;
         }
 
@@ -374,21 +379,29 @@ class plgVmPaymentReepay extends vmPSPlugin {
             return $reepayService->getWebhookSecret();
         });
 
+        $this->logWebhook('Received: event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle . ', pm=' . $virtuemart_paymentmethod_id . ', mode=' . ($testMode ? 'test' : 'live') . ', remote=' . $remoteAddr, 'info');
+
         if (!$verifier->verify($payload)) {
             // Unverifiable notification: reject before any order lookup or status
             // change, and don't disclose why (missing fields vs. bad signature vs.
-            // secret unavailable all look the same from the outside).
+            // secret unavailable all look the same from the outside) to the caller -
+            // but it's safe and useful to record the non-sensitive context here.
+            $this->logWebhook('Rejected: signature verification failed. event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle . ', pm=' . $virtuemart_paymentmethod_id, 'warning');
             return NULL;
         }
+
+        $this->logWebhook('Verified: signature OK. event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle, 'info');
 
         // check if invoice exists in Frisbii Payments
         $invoice = $reepayService->getInvoice($invoiceHandle);
 
         if(empty($invoice) ) {
+           $this->logWebhook('Stopped: getInvoice() returned no response for invoice=' . $invoiceHandle, 'warning');
            return NULL;
         }
 
         if ($invoice['status'] !== 'success' || !in_array($invoice['body']['state'], ['authorized', 'settled'])) {
+            $this->logWebhook('Stopped: invoice=' . $invoiceHandle . ' is not authorized/settled (status=' . $invoice['status'] . ', state=' . ($invoice['body']['state'] ?? 'n/a') . ')', 'info');
             return FALSE;
         }
 
@@ -397,6 +410,8 @@ class plgVmPaymentReepay extends vmPSPlugin {
         $payment_data = $this->getDataByOrderId($virtuemart_order_id);
 
         if( is_object($payment_data) && 'pending' === $payment_data->payment_status) {
+
+            $this->logWebhook('Updating order_id=' . $virtuemart_order_id . ' (invoice=' . $invoiceHandle . ') to state=' . $invoice['body']['state'], 'info');
 
             $orderHistory['customer_notified'] = 1;
 
@@ -426,8 +441,38 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $cart->emptyCart();
 
+        } else {
+            $this->logWebhook('Skipped: order_id=' . $virtuemart_order_id . ' (invoice=' . $invoiceHandle . ') is not in "pending" state, no update needed', 'info');
         }
 
+    }
+
+    /**
+     * Writes a non-sensitive trace line for the webhook flow to
+     * administrator/logs/reepay_webhook.php, to make it possible to follow whether
+     * a notification was received, verified, and acted on without needing to
+     * reproduce the request. Never pass the private key, webhook secret, raw
+     * signature, or full request payload here.
+     *
+     * @param string $message
+     * @param string $level 'info'|'warning'|'error'
+     */
+    private function logWebhook($message, $level = 'info') {
+        static $loggerRegistered = false;
+
+        if (!$loggerRegistered) {
+            \Joomla\CMS\Log\Log::addLogger(['text_file' => 'reepay_webhook.php'], \Joomla\CMS\Log\Log::ALL, ['reepay_webhook']);
+            $loggerRegistered = true;
+        }
+
+        $priority = \Joomla\CMS\Log\Log::INFO;
+        if ($level === 'warning') {
+            $priority = \Joomla\CMS\Log\Log::WARNING;
+        } elseif ($level === 'error') {
+            $priority = \Joomla\CMS\Log\Log::ERROR;
+        }
+
+        \Joomla\CMS\Log\Log::add('Reepay webhook: ' . $message, $priority, 'reepay_webhook');
     }
 
     /**

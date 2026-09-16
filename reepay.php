@@ -62,10 +62,11 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         $reepayService = new ReepayService(trim($privateKey));
 
+        $this->getPaymentCurrency($method);
+
         $paymentCurrency = CurrencyDisplay::getInstance($method->payment_currency);
         $totalInPaymentCurrency = round($paymentCurrency->convertCurrencyTo($method->payment_currency, $order['details']['BT']->order_total, false), 2);
 
-        $this->getPaymentCurrency($method);
         $currency_code_3 = shopFunctions::getCurrencyByID($method->payment_currency, 'currency_code_3');
 
         $testMode = boolval($method->test_mode);
@@ -75,7 +76,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
         $acceptUrl = JROUTE::_(JURI::root() . 'index.php?option=com_virtuemart&view=pluginresponse&task=pluginresponsereceived&pm=' . $order['details']['BT']->virtuemart_paymentmethod_id . '&ordernumber=' . $order['details']['BT']->order_number);
         $cancelUrl = JROUTE::_(JURI::root() . 'index.php?option=com_virtuemart&view=vmplg&task=pluginUserPaymentCancel&on=' . $order['details']['BT']->order_number . '&pm=' . $order['details']['BT']->virtuemart_paymentmethod_id);
 
-        $payment_type = $method->reepay_instant_settle == 0 ? 'authorization': 'settle';
+        $payment_type = $method->instant_settle == 0 ? 'authorization': 'settle';
 
         $paymentMethods = new InvoiceOrderPaymentMethods($method->reepay_paytypes);
 
@@ -92,20 +93,20 @@ class plgVmPaymentReepay extends vmPSPlugin {
                     ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
                     ->postalCode($address->zip)
                     ->city($address->city)
-                    ->address($address->address1)
-                    ->address2($address->address2)
-                    ->firstName ($address->firs_name)
+                    ->address($address->address_1)
+                    ->address2($address->address_2)
+                    ->firstName ($address->first_name)
                     ->lastName( $address->last_name)
                     ->vat(''))
                 ->billingAddress((new InvoiceOrderBillingAddress())
                     ->email($address->email)
-                    ->address($address->address1)
-                    ->address2($address->address2)
+                    ->address($address->address_1)
+                    ->address2($address->address_2)
                     ->postalCode($address->zip)
                     ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
                     ->city( $address->city )
                     ->lastName( $address->last_name )
-                    ->firstName( $address->firs_name )
+                    ->firstName( $address->first_name )
                     ->vat('')))
             ->settle($method->instant_settle == 1)
             ->acceptUrl($acceptUrl)

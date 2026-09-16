@@ -46,7 +46,6 @@ class InvoiceData implements InvoiceDataInterface
         if (is_array($this->payment_methods->toArray())) {
              $return['payment_methods'] = $this->payment_methods->toArray();
         }
-        $return['key'] = $this->key;
        return $return;
 
     }

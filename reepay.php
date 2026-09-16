@@ -338,7 +338,13 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
     function plgVmOnPaymentNotification() {
         $input = JFactory::getApplication()->input->json;
-        $invoiceHandle =  $input->get('invoice');
+        $payload = json_decode($input->getRaw(), true);
+
+        if (!is_array($payload)) {
+            return NULL;
+        }
+
+        $invoiceHandle = isset($payload['invoice']) ? $payload['invoice'] : null;
 
         if( empty( $invoiceHandle ) ) {
             return NULL;
@@ -354,11 +360,26 @@ class plgVmPaymentReepay extends vmPSPlugin {
         }
 
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_service.php';
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_verifier.php';
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_secret_store.php';
 
+        $testMode = (intval($method->test_mode) != 0);
         $privateKey = (intval($method->test_mode) == 0) ?
         $method->private_key_live : $method->private_key_test;
 
         $reepayService = new ReepayService(trim($privateKey));
+
+        $secretStore = new ReepayWebhookMethodSecretStore($method, $testMode ? 'test' : 'live');
+        $verifier = new ReepayWebhookVerifier($secretStore, function () use ($reepayService) {
+            return $reepayService->getWebhookSecret();
+        });
+
+        if (!$verifier->verify($payload)) {
+            // Unverifiable notification: reject before any order lookup or status
+            // change, and don't disclose why (missing fields vs. bad signature vs.
+            // secret unavailable all look the same from the outside).
+            return NULL;
+        }
 
         // check if invoice exists in Frisbii Payments
         $invoice = $reepayService->getInvoice($invoiceHandle);

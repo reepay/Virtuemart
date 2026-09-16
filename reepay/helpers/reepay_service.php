@@ -88,6 +88,30 @@ class ReepayService
         return $this->client->request('https://api.reepay.com/v1/account/webhook_settings');
     }
 
+    /**
+     * @return string|null The webhook secret, or null if the API call failed or
+     *                      returned no usable secret (fail closed for the caller).
+     */
+    public function getWebhookSecret() {
+        return self::extractSecretFromWebhooksResult($this->getWebhooks());
+    }
+
+    /**
+     * @param mixed $result The raw return value of getWebhooks().
+     * @return string|null
+     */
+    public static function extractSecretFromWebhooksResult($result) {
+        if (!is_array($result) || !isset($result['status']) || $result['status'] !== 'success') {
+            return null;
+        }
+
+        if (empty($result['body']['secret']) || !is_string($result['body']['secret'])) {
+            return null;
+        }
+
+        return $result['body']['secret'];
+    }
+
     private function prepareAmount($amount) {
         return (string) ( round( $amount, 2) * 100 );
     }

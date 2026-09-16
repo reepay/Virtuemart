@@ -37,6 +37,14 @@
                 <field type="text" name="private_key_test" size="50" label="VMPAYMENT_REEPAY_PRIVATE_KEY_TEST" default="" description="" />
                 <field type="text" name="private_key_live" size="50" label="VMPAYMENT_REEPAY_PRIVATE_KEY_LIVE" default="" description="" />
 
+                <!-- Cached webhook secret used to verify HMAC-SHA256 signatures on incoming
+                     payment notifications (see plgVmOnPaymentNotification()). Hidden: these
+                     are runtime cache values, not merchant-configurable settings. -->
+                <field type="hidden" name="reepay_webhook_secret_test" default="" />
+                <field type="hidden" name="reepay_webhook_secret_test_expires" default="0" />
+                <field type="hidden" name="reepay_webhook_secret_live" default="" />
+                <field type="hidden" name="reepay_webhook_secret_live_expires" default="0" />
+
                 <field name="status_authorized" type="vmorderstate" scope="com_virtuemart" default="U"
                        label="VMPAYMENT_REEPAY_STATUS_PAYMENT_AUTHORIZED" description="VMPAYMENT_REEPAY_STATUS_PAYMENT_AUTHORIZED_TIP"/>
 

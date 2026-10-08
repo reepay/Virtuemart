@@ -257,6 +257,7 @@ class InvoiceOrderData implements InvoiceDataInterface
     private $customer;
     private $billingAddress;
     private $key;
+    private $order_lines;
 
     public function key($key) {
         $this->key = $key;
@@ -288,18 +289,30 @@ class InvoiceOrderData implements InvoiceDataInterface
         return $this;
     }
 
+    public function orderLines(array $order_lines) {
+        $this->order_lines = $order_lines;
+        return $this;
+    }
+
     public function toArray() {
-        return ['handle' => $this->prepareHandle($this->handle),
-            'key' => $this->key,
-            'amount' => $this->prepareAmount($this->amount),
-            'currency' => $this->currency,
-            'customer' => $this->customer->toArray(),
-            'billing_address' => $this->billingAddress->toArray()
+        $data = [
+            'handle'          => $this->prepareHandle($this->handle),
+            'key'             => $this->key,
+            'amount'          => $this->prepareAmount($this->amount),
+            'currency'        => $this->currency,
+            'customer'        => $this->customer->toArray(),
+            'billing_address' => $this->billingAddress->toArray(),
         ];
+
+        if (!empty($this->order_lines)) {
+            $data['order_lines'] = $this->order_lines;
+        }
+
+        return $data;
     }
 
     private function prepareAmount($amount) {
-        return (string) ($amount * 100);
+        return (int) round($amount * 100);
     }
 
     private function prepareHandle($handle) {

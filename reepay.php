@@ -77,36 +77,82 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         $payment_type = $method->reepay_instant_settle == 0 ? 'authorization': 'settle';
 
-        $paymentMethods = new InvoiceOrderPaymentMethods($method->reepay_paytypes);
+        $selectedPaytypes = is_array($method->reepay_paytypes)
+            ? $method->reepay_paytypes
+            : [$method->reepay_paytypes];
+
+        $paymentMethods = new InvoiceOrderPaymentMethods($selectedPaytypes);
+
+        $isKlarna = in_array('klarna', $selectedPaytypes, true);
+
+        $orderLines = [];
+
+        if ($isKlarna) {
+            foreach ($order['items'] as $item) {
+                $lineTotal   = round($item->product_final_price * $item->product_quantity, 2);
+                $lineTax     = round(floatval($item->product_tax), 2);
+                $lineExclTax = $lineTotal - $lineTax;
+                $vatRate     = $lineExclTax > 0 ? round($lineTax / $lineExclTax, 4) : 0;
+
+                $orderLines[] = [
+                    'ordertext'       => $item->product_name,
+                    'amount'          => (int) round($lineTotal * 100),
+                    'vat'             => $vatRate,
+                    'quantity'        => (int) $item->product_quantity,
+                    'amount_incl_vat' => true,
+                ];
+            }
+
+            $shipAmount = round(floatval($order['details']['BT']->order_shipment), 2);
+            if ($shipAmount > 0) {
+                $shipTax     = round(floatval($order['details']['BT']->order_shipment_tax), 2);
+                $shipExclTax = $shipAmount - $shipTax;
+                $shipVat     = $shipExclTax > 0 ? round($shipTax / $shipExclTax, 4) : 0;
+
+                $orderLines[] = [
+                    'ordertext'       => 'Shipping',
+                    'amount'          => (int) round($shipAmount * 100),
+                    'vat'             => $shipVat,
+                    'quantity'        => 1,
+                    'amount_incl_vat' => true,
+                ];
+            }
+        }
+
+        $orderData = (new InvoiceOrderData())
+            ->handle($order['details']['BT']->order_number)
+            ->amount($totalInPaymentCurrency)
+            ->currency($currency_code_3)
+            ->customer((new InvoiceOrderCustomerData())
+                ->handle($address->email)
+                ->test($testMode)
+                ->phoneNumber(['customer']['phone_number'] ?? null)
+                ->email($address->email)
+                ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
+                ->postalCode($address->zip)
+                ->city($address->city)
+                ->address($address->address1)
+                ->address2($address->address2)
+                ->firstName($address->first_name)
+                ->lastName($address->last_name)
+                ->vat(''))
+            ->billingAddress((new InvoiceOrderBillingAddress())
+                ->email($address->email)
+                ->address($address->address1)
+                ->address2($address->address2)
+                ->postalCode($address->zip)
+                ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
+                ->city($address->city)
+                ->lastName($address->last_name)
+                ->firstName($address->first_name)
+                ->vat(''));
+
+        if ($isKlarna && !empty($orderLines)) {
+            $orderData->orderLines($orderLines);
+        }
 
         $input = ((new InvoiceData())
-            ->order((new InvoiceOrderData())
-                ->handle( $order['details']['BT']->order_number )
-                ->amount($totalInPaymentCurrency)
-                ->currency($currency_code_3)
-                ->customer((new InvoiceOrderCustomerData())
-                    ->handle( $address->email )
-                    ->test( $testMode )
-                    ->phoneNumber(['customer']['phone_number'] ?? null)
-                    ->email($address->email)
-                    ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
-                    ->postalCode($address->zip)
-                    ->city($address->city)
-                    ->address($address->address1)
-                    ->address2($address->address2)
-                    ->firstName ($address->firs_name)
-                    ->lastName( $address->last_name)
-                    ->vat(''))
-                ->billingAddress((new InvoiceOrderBillingAddress())
-                    ->email($address->email)
-                    ->address($address->address1)
-                    ->address2($address->address2)
-                    ->postalCode($address->zip)
-                    ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
-                    ->city( $address->city )
-                    ->lastName( $address->last_name )
-                    ->firstName( $address->firs_name )
-                    ->vat('')))
+            ->order($orderData)
             ->settle($method->instant_settle == 1)
             ->acceptUrl($acceptUrl)
             ->cancelUrl($cancelUrl)
@@ -114,9 +160,16 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             vmdebug('Request parameters:', $input);
 
+            $debugLog = __DIR__ . '/reepay_debug.log';
+            $logEntry = date('Y-m-d H:i:s') . ' [REQUEST] ' . json_encode($input, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n";
+            file_put_contents($debugLog, $logEntry, FILE_APPEND);
+
             $result = $reepayService->createCheckoutSession($input);
 
             vmdebug('Response parameters:', $result);
+
+            $logEntry = date('Y-m-d H:i:s') . ' [RESPONSE] ' . json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n";
+            file_put_contents($debugLog, $logEntry, FILE_APPEND);
 
         if ('success' == $result['status']) {
 
@@ -180,6 +233,8 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $returnValue = 0;
 
+            vmdebug('Reepay API error', ['status' => $result['status'], 'error' => $result['error'] ?? '', 'body' => $result['body'] ?? '']);
+
             $html = vmText::_ ('VMPAYMENT_REEPAY_TECHNICAL_ERROR') .
                 " <br /> - " .  'Some issue with processing your order payment'  .  "<br />";
         }
@@ -224,6 +279,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
     public function plgVmDisplayListFEPayment(VirtueMartCart $cart, $selected = 0, &$htmlIn)
     {
+        JFactory::getDocument()->addStyleDeclaration('.vmCartPaymentLogo img { width: 100px; height: auto; }');
         return $this->displayListFE($cart, $selected, $htmlIn);
     }
 

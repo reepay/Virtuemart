@@ -107,6 +107,7 @@
                     <option value="paypal">PayPal</option>
                     <option value="applepay">Apple Pay</option>
                     <option value="googlepay">Google Pay</option>
+                    <option value="klarna">Klarna</option>
                 </field>
 
                 <field name="payment_logos" type="imagelist" label="VMPAYMENT_REEPAY_LOGOS" multiple="true"

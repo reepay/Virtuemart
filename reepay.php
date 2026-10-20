@@ -82,6 +82,10 @@ class plgVmPaymentReepay extends vmPSPlugin {
             ? $method->reepay_paytypes
             : [$method->reepay_paytypes];
 
+        if (array_intersect(['card', 'mc', 'visa'], $selectedPaytypes) && !in_array('click_to_pay', $selectedPaytypes)) {
+            $selectedPaytypes[] = 'click_to_pay';
+        }
+
         $paymentMethods = new InvoiceOrderPaymentMethods($selectedPaytypes);
 
         $isKlarna = in_array('klarna', $selectedPaytypes, true);

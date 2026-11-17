@@ -93,35 +93,18 @@ class plgVmPaymentReepay extends vmPSPlugin {
         $orderLines = [];
 
         if ($isKlarna) {
-            foreach ($order['items'] as $item) {
-                $lineTotal   = round($item->product_final_price * $item->product_quantity, 2);
-                $lineTax     = round(floatval($item->product_tax), 2);
-                $lineExclTax = $lineTotal - $lineTax;
-                $vatRate     = $lineExclTax > 0 ? round($lineTax / $lineExclTax, 4) : 0;
+            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR .'vmpayment/reepay/reepay/helpers/reepay_order_lines.php';
 
-                $orderLines[] = [
-                    'ordertext'       => $item->product_name,
-                    'amount'          => (int) round($lineTotal * 100),
-                    'vat'             => $vatRate,
-                    'quantity'        => (int) $item->product_quantity,
-                    'amount_incl_vat' => true,
-                ];
-            }
-
-            $shipAmount = round(floatval($order['details']['BT']->order_shipment), 2);
-            if ($shipAmount > 0) {
-                $shipTax     = round(floatval($order['details']['BT']->order_shipment_tax), 2);
-                $shipExclTax = $shipAmount - $shipTax;
-                $shipVat     = $shipExclTax > 0 ? round($shipTax / $shipExclTax, 4) : 0;
-
-                $orderLines[] = [
-                    'ordertext'       => 'Shipping',
-                    'amount'          => (int) round($shipAmount * 100),
-                    'vat'             => $shipVat,
-                    'quantity'        => 1,
-                    'amount_incl_vat' => true,
-                ];
-            }
+            // Lines in the payment currency, unit prices; [] if they can't match the order total exactly
+            // (then a plain amount is sent instead).
+            $orderLines = ReepayOrderLines::build(
+                $order['items'],
+                $order['details']['BT'],
+                function ($amount) use ($paymentCurrency, $method) {
+                    return $paymentCurrency->convertCurrencyTo($method->payment_currency, $amount, false);
+                },
+                $totalInPaymentCurrency
+            );
         }
 
         $orderData = (new InvoiceOrderData())

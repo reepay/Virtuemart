@@ -297,14 +297,17 @@ class InvoiceOrderData implements InvoiceDataInterface
         $data = [
             'handle'          => $this->prepareHandle($this->handle),
             'key'             => $this->key,
-            'amount'          => $this->prepareAmount($this->amount),
             'currency'        => $this->currency,
             'customer'        => $this->customer->toArray(),
             'billing_address' => $this->billingAddress->toArray(),
         ];
 
+        // Frisbii accepts either 'amount' or 'order_lines', never both (HTTP 422 otherwise).
+        // With order lines the invoice amount is the sum of the lines.
         if (!empty($this->order_lines)) {
             $data['order_lines'] = $this->order_lines;
+        } else {
+            $data['amount'] = $this->prepareAmount($this->amount);
         }
 
         return $data;

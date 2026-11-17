@@ -93,16 +93,22 @@ class plgVmPaymentReepay extends vmPSPlugin {
         $orderLines = [];
 
         if ($isKlarna) {
-            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR .'vmpayment/reepay/reepay/helpers/reepay_order_lines.php';
+            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR
+                . 'vmpayment/reepay/reepay/helpers/reepay_order_lines.php';
 
-            // Lines in the payment currency, unit prices; [] if they can't match the order total exactly
-            // (then a plain amount is sent instead).
+            // Converts a shop-currency amount to the payment currency
+            // (same conversion as the order total above).
+            $paymentCurrencyId = $method->payment_currency;
+            $toPaymentCurrency = function ($amount) use ($paymentCurrency, $paymentCurrencyId) {
+                return $paymentCurrency->convertCurrencyTo($paymentCurrencyId, $amount, false);
+            };
+
+            // Lines in the payment currency with unit prices. Returns [] if they can't match
+            // the order total exactly; then a plain amount is sent instead.
             $orderLines = ReepayOrderLines::build(
                 $order['items'],
                 $order['details']['BT'],
-                function ($amount) use ($paymentCurrency, $method) {
-                    return $paymentCurrency->convertCurrencyTo($method->payment_currency, $amount, false);
-                },
+                $toPaymentCurrency,
                 $totalInPaymentCurrency
             );
         }
@@ -148,16 +154,19 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             vmdebug('Request parameters:', $input);
 
-            $debugLog = __DIR__ . '/reepay_debug.log';
-            $logEntry = date('Y-m-d H:i:s') . ' [REQUEST] ' . json_encode($input, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n";
-            file_put_contents($debugLog, $logEntry, FILE_APPEND);
+            // Non-sensitive summary to administrator/logs/reepay_checkout.php (no customer data)
+            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR
+                . 'vmpayment/reepay/reepay/helpers/reepay_checkout_log.php';
+            $this->logCheckout(ReepayCheckoutLog::request($input));
 
             $result = $reepayService->createCheckoutSession($input);
 
             vmdebug('Response parameters:', $result);
 
-            $logEntry = date('Y-m-d H:i:s') . ' [RESPONSE] ' . json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n";
-            file_put_contents($debugLog, $logEntry, FILE_APPEND);
+            $this->logCheckout(
+                ReepayCheckoutLog::response($input['order']['handle'] ?? null, $result),
+                ('success' == ($result['status'] ?? '')) ? 'info' : 'warning'
+            );
 
         if ('success' == $result['status']) {
 
@@ -382,8 +391,6 @@ class plgVmPaymentReepay extends vmPSPlugin {
     }
 
     function plgVmOnPaymentNotification() {
-        file_put_contents(__DIR__ . '/reepay_debug.log', date('Y-m-d H:i:s') . ' [WEBHOOK] plgVmOnPaymentNotification called, raw=' . file_get_contents('php://input') . PHP_EOL, FILE_APPEND);
-
         $input = JFactory::getApplication()->input->json;
         $payload = json_decode($input->getRaw(), true);
         $remoteAddr = JFactory::getApplication()->input->server->getString('REMOTE_ADDR', 'unknown');
@@ -514,11 +521,35 @@ class plgVmPaymentReepay extends vmPSPlugin {
      * @param string $level 'info'|'warning'|'error'
      */
     private function logWebhook($message, $level = 'info') {
-        static $loggerRegistered = false;
+        $this->writeLog('reepay_webhook', 'Reepay webhook: ' . $message, $level);
+    }
 
-        if (!$loggerRegistered) {
-            \Joomla\CMS\Log\Log::addLogger(['text_file' => 'reepay_webhook.php'], \Joomla\CMS\Log\Log::ALL, ['reepay_webhook']);
-            $loggerRegistered = true;
+    /**
+     * Writes a non-sensitive checkout-session trace line (see ReepayCheckoutLog) to
+     * administrator/logs/reepay_checkout.php. Never pass customer data, URLs, keys
+     * or the raw request/response here.
+     *
+     * @param string $message
+     * @param string $level 'info'|'warning'|'error'
+     */
+    private function logCheckout($message, $level = 'info') {
+        $this->writeLog('reepay_checkout', 'Reepay ' . $message, $level);
+    }
+
+    /**
+     * Joomla text-file log in the administrator logs folder. Joomla starts these .php
+     * files with a die() header, so they can't be downloaded over the web.
+     *
+     * @param string $category Also used as the file name (<category>.php)
+     * @param string $message
+     * @param string $level 'info'|'warning'|'error'
+     */
+    private function writeLog($category, $message, $level = 'info') {
+        static $registered = [];
+
+        if (empty($registered[$category])) {
+            \Joomla\CMS\Log\Log::addLogger(['text_file' => $category . '.php'], \Joomla\CMS\Log\Log::ALL, [$category]);
+            $registered[$category] = true;
         }
 
         $priority = \Joomla\CMS\Log\Log::INFO;
@@ -528,7 +559,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
             $priority = \Joomla\CMS\Log\Log::ERROR;
         }
 
-        \Joomla\CMS\Log\Log::add('Reepay webhook: ' . $message, $priority, 'reepay_webhook');
+        \Joomla\CMS\Log\Log::add($message, $priority, $category);
     }
 
     /**

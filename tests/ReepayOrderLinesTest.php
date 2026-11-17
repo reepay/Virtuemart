@@ -83,6 +83,25 @@ class ReepayOrderLinesTest extends TestCase
         $this->assertSame([], $lines);
     }
 
+    public function testOrderItemNameIsUsedAsLineText(): void
+    {
+        // order_item_name is the name stored on the order; product_name is the CURRENT catalog name
+        $item = (object) ['order_item_name' => 'Shirt (ordered name)', 'product_name' => 'Shirt (renamed later)',
+                          'product_final_price' => 79.98, 'product_tax' => 5.23, 'product_quantity' => 1];
+        $lines = ReepayOrderLines::build([$item], self::bt(), self::sameCurrency(), 79.98);
+
+        $this->assertSame('Shirt (ordered name)', $lines[0]['ordertext']);
+    }
+
+    public function testDeletedProductStillHasLineText(): void
+    {
+        // product deleted from catalog: VirtueMart can't add product_name, order_item_name is still there
+        $item = (object) ['order_item_name' => 'Old product', 'product_final_price' => 79.98, 'product_tax' => 5.23, 'product_quantity' => 1];
+        $lines = ReepayOrderLines::build([$item], self::bt(), self::sameCurrency(), 79.98);
+
+        $this->assertSame('Old product', $lines[0]['ordertext']);
+    }
+
     public function testEmptyItemsGiveNoLines(): void
     {
         $this->assertSame([], ReepayOrderLines::build([], self::bt(), self::sameCurrency(), 0));

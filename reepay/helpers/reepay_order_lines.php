@@ -17,7 +17,7 @@
 class ReepayOrderLines
 {
     /**
-     * @param array    $items           $order['items'] (objects with product_name, product_final_price,
+     * @param array    $items           $order['items'] (objects with order_item_name, product_final_price,
      *                                  product_tax, product_quantity; prices per unit, incl. tax, shop currency)
      * @param object   $bt              $order['details']['BT'] (order_shipment, order_shipment_tax,
      *                                  order_payment, order_payment_tax; amounts excl. tax + tax, shop currency)
@@ -35,7 +35,7 @@ class ReepayOrderLines
                 continue;
             }
             $lines[] = self::line(
-                (string) $item->product_name,
+                self::itemName($item),
                 (float) $item->product_final_price,
                 (float) $item->product_tax,
                 $quantity,
@@ -66,6 +66,21 @@ class ReepayOrderLines
         }
 
         return $lines;
+    }
+
+    /**
+     * The name stored on the order (order_item_name). VirtueMart only adds product_name from the
+     * current catalog, so it can differ (renamed) or be missing (deleted product).
+     */
+    private static function itemName($item)
+    {
+        foreach (['order_item_name', 'product_name'] as $field) {
+            if (isset($item->$field) && trim((string) $item->$field) !== '') {
+                return trim((string) $item->$field);
+            }
+        }
+
+        return 'Item';
     }
 
     private static function line($text, $unitInclTax, $unitTax, $quantity, callable $toPaymentCurrency)

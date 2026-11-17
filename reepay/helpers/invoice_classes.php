@@ -46,7 +46,6 @@ class InvoiceData implements InvoiceDataInterface
         if (is_array($this->payment_methods->toArray())) {
              $return['payment_methods'] = $this->payment_methods->toArray();
         }
-        $return['key'] = $this->key;
        return $return;
 
     }
@@ -257,6 +256,7 @@ class InvoiceOrderData implements InvoiceDataInterface
     private $customer;
     private $billingAddress;
     private $key;
+    private $order_lines;
 
     public function key($key) {
         $this->key = $key;
@@ -288,18 +288,33 @@ class InvoiceOrderData implements InvoiceDataInterface
         return $this;
     }
 
+    public function orderLines(array $order_lines) {
+        $this->order_lines = $order_lines;
+        return $this;
+    }
+
     public function toArray() {
-        return ['handle' => $this->prepareHandle($this->handle),
-            'key' => $this->key,
-            'amount' => $this->prepareAmount($this->amount),
-            'currency' => $this->currency,
-            'customer' => $this->customer->toArray(),
-            'billing_address' => $this->billingAddress->toArray()
+        $data = [
+            'handle'          => $this->prepareHandle($this->handle),
+            'key'             => $this->key,
+            'currency'        => $this->currency,
+            'customer'        => $this->customer->toArray(),
+            'billing_address' => $this->billingAddress->toArray(),
         ];
+
+        // Frisbii accepts either 'amount' or 'order_lines', never both (HTTP 422 otherwise).
+        // With order lines the invoice amount is the sum of the lines.
+        if (!empty($this->order_lines)) {
+            $data['order_lines'] = $this->order_lines;
+        } else {
+            $data['amount'] = $this->prepareAmount($this->amount);
+        }
+
+        return $data;
     }
 
     private function prepareAmount($amount) {
-        return (string) ($amount * 100);
+        return (int) round($amount * 100);
     }
 
     private function prepareHandle($handle) {

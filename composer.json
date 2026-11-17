@@ -1,0 +1,11 @@
+{
+    "name": "frisbii/vmpayment-reepay-tests",
+    "description": "Dev-only dependencies for unit testing the Frisbii/Reepay VirtueMart payment plugin.",
+    "type": "project",
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

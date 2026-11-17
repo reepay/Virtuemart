@@ -1,5 +1,5 @@
 # Frisbii Pay
-Lastest version: 1.2.1
+Lastest version: 1.3
 
 ## Joomla Virtuemart
 Payment Plugin for Joomla Virtuemart 3.x and 4.x
@@ -19,6 +19,12 @@ Payment Plugin for Joomla Virtuemart 3.x and 4.x
  - php >= 7.0
 
 ## Changelog
+v 1.3
+- [Fix] - Payment improvements.
+- [Fix] - Frisbii webhook authentication with HMAC-SHA256.
+- [Feature] - Supports Visa & Mastercard Click-to-pay.
+- [Feature] - Support new Klarna payment option for all previous Klarna options.
+
 v 1.2.1
 - [Fix] - Fixed fatal error on PHP 8+ when calling API requests without parameters (e.g. getWebhooks()).
 - [Docs] - Updated Readme with detailed step-by-step installation guide for Joomla.

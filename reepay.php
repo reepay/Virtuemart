@@ -62,10 +62,11 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         $reepayService = new ReepayService(trim($privateKey));
 
+        $this->getPaymentCurrency($method);
+
         $paymentCurrency = CurrencyDisplay::getInstance($method->payment_currency);
         $totalInPaymentCurrency = round($paymentCurrency->convertCurrencyTo($method->payment_currency, $order['details']['BT']->order_total, false), 2);
 
-        $this->getPaymentCurrency($method);
         $currency_code_3 = shopFunctions::getCurrencyByID($method->payment_currency, 'currency_code_3');
 
         $testMode = boolval($method->test_mode);
@@ -75,38 +76,77 @@ class plgVmPaymentReepay extends vmPSPlugin {
         $acceptUrl = JROUTE::_(JURI::root() . 'index.php?option=com_virtuemart&view=pluginresponse&task=pluginresponsereceived&pm=' . $order['details']['BT']->virtuemart_paymentmethod_id . '&ordernumber=' . $order['details']['BT']->order_number);
         $cancelUrl = JROUTE::_(JURI::root() . 'index.php?option=com_virtuemart&view=vmplg&task=pluginUserPaymentCancel&on=' . $order['details']['BT']->order_number . '&pm=' . $order['details']['BT']->virtuemart_paymentmethod_id);
 
-        $payment_type = $method->reepay_instant_settle == 0 ? 'authorization': 'settle';
+        $payment_type = $method->instant_settle == 0 ? 'authorization': 'settle';
 
-        $paymentMethods = new InvoiceOrderPaymentMethods($method->reepay_paytypes);
+        $selectedPaytypes = is_array($method->reepay_paytypes)
+            ? $method->reepay_paytypes
+            : [$method->reepay_paytypes];
+
+        if (array_intersect(['card', 'mc', 'visa'], $selectedPaytypes) && !in_array('click_to_pay', $selectedPaytypes)) {
+            $selectedPaytypes[] = 'click_to_pay';
+        }
+
+        $paymentMethods = new InvoiceOrderPaymentMethods($selectedPaytypes);
+
+        $isKlarna = in_array('klarna', $selectedPaytypes, true);
+
+        $orderLines = [];
+
+        if ($isKlarna) {
+            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR
+                . 'vmpayment/reepay/reepay/helpers/reepay_order_lines.php';
+
+            // Converts a shop-currency amount to the payment currency
+            // (same conversion as the order total above).
+            $paymentCurrencyId = $method->payment_currency;
+            $toPaymentCurrency = function ($amount) use ($paymentCurrency, $paymentCurrencyId) {
+                return $paymentCurrency->convertCurrencyTo($paymentCurrencyId, $amount, false);
+            };
+
+            // Lines in the payment currency with unit prices. Returns [] if they can't match
+            // the order total exactly; then a plain amount is sent instead.
+            $orderLines = ReepayOrderLines::build(
+                $order['items'],
+                $order['details']['BT'],
+                $toPaymentCurrency,
+                $totalInPaymentCurrency
+            );
+        }
+
+        $orderData = (new InvoiceOrderData())
+            ->handle($order['details']['BT']->order_number)
+            ->amount($totalInPaymentCurrency)
+            ->currency($currency_code_3)
+            ->customer((new InvoiceOrderCustomerData())
+                ->handle($address->email)
+                ->test($testMode)
+                ->phoneNumber(['customer']['phone_number'] ?? null)
+                ->email($address->email)
+                ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
+                ->postalCode($address->zip)
+                ->city($address->city)
+                ->address($address->address_1)
+                ->address2($address->address_2)
+                ->firstName($address->first_name)
+                ->lastName($address->last_name)
+                ->vat(''))
+            ->billingAddress((new InvoiceOrderBillingAddress())
+                ->email($address->email)
+                ->address($address->address_1)
+                ->address2($address->address_2)
+                ->postalCode($address->zip)
+                ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
+                ->city($address->city)
+                ->lastName($address->last_name)
+                ->firstName($address->first_name)
+                ->vat(''));
+
+        if ($isKlarna && !empty($orderLines)) {
+            $orderData->orderLines($orderLines);
+        }
 
         $input = ((new InvoiceData())
-            ->order((new InvoiceOrderData())
-                ->handle( $order['details']['BT']->order_number )
-                ->amount($totalInPaymentCurrency)
-                ->currency($currency_code_3)
-                ->customer((new InvoiceOrderCustomerData())
-                    ->handle( $address->email )
-                    ->test( $testMode )
-                    ->phoneNumber(['customer']['phone_number'] ?? null)
-                    ->email($address->email)
-                    ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
-                    ->postalCode($address->zip)
-                    ->city($address->city)
-                    ->address($address->address1)
-                    ->address2($address->address2)
-                    ->firstName ($address->firs_name)
-                    ->lastName( $address->last_name)
-                    ->vat(''))
-                ->billingAddress((new InvoiceOrderBillingAddress())
-                    ->email($address->email)
-                    ->address($address->address1)
-                    ->address2($address->address2)
-                    ->postalCode($address->zip)
-                    ->country(ShopFunctions::getCountryByID($address->virtuemart_country_id, 'country_2_code'))
-                    ->city( $address->city )
-                    ->lastName( $address->last_name )
-                    ->firstName( $address->firs_name )
-                    ->vat('')))
+            ->order($orderData)
             ->settle($method->instant_settle == 1)
             ->acceptUrl($acceptUrl)
             ->cancelUrl($cancelUrl)
@@ -114,9 +154,19 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             vmdebug('Request parameters:', $input);
 
+            // Non-sensitive summary to administrator/logs/reepay_checkout.php (no customer data)
+            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR
+                . 'vmpayment/reepay/reepay/helpers/reepay_checkout_log.php';
+            $this->logCheckout(ReepayCheckoutLog::request($input));
+
             $result = $reepayService->createCheckoutSession($input);
 
             vmdebug('Response parameters:', $result);
+
+            $this->logCheckout(
+                ReepayCheckoutLog::response($input['order']['handle'] ?? null, $result),
+                ('success' == ($result['status'] ?? '')) ? 'info' : 'warning'
+            );
 
         if ('success' == $result['status']) {
 
@@ -180,6 +230,8 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $returnValue = 0;
 
+            vmdebug('Reepay API error', ['status' => $result['status'], 'error' => $result['error'] ?? '', 'body' => $result['body'] ?? '']);
+
             $html = vmText::_ ('VMPAYMENT_REEPAY_TECHNICAL_ERROR') .
                 " <br /> - " .  'Some issue with processing your order payment'  .  "<br />";
         }
@@ -224,6 +276,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
     public function plgVmDisplayListFEPayment(VirtueMartCart $cart, $selected = 0, &$htmlIn)
     {
+        JFactory::getDocument()->addStyleDeclaration('.vmCartPaymentLogo img { width: 100px; height: auto; }');
         return $this->displayListFE($cart, $selected, $htmlIn);
     }
 
@@ -249,6 +302,8 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         $this->getPaymentCurrency($method);
         $currency_code_3 = shopFunctions::getCurrencyByID($method->payment_currency, 'currency_code_3');
+
+        $orderlink = '';
 
         // check if order has not already been updated with webhook
         if ('pending' == $payment_data->payment_status) {
@@ -312,7 +367,6 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $cart->emptyCart();
 
-            $orderlink='';
             $tracking = VmConfig::get('ordertracking','guests');
             if($tracking !='none' and !($tracking =='registered' and empty($order['details']['BT']->virtuemart_user_id) )) {
 
@@ -338,9 +392,20 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
     function plgVmOnPaymentNotification() {
         $input = JFactory::getApplication()->input->json;
-        $invoiceHandle =  $input->get('invoice');
+        $payload = json_decode($input->getRaw(), true);
+        $remoteAddr = JFactory::getApplication()->input->server->getString('REMOTE_ADDR', 'unknown');
+
+        if (!is_array($payload)) {
+            $this->logWebhook('Rejected: request body is not valid JSON. remote=' . $remoteAddr, 'warning');
+            return NULL;
+        }
+
+        $invoiceHandle = isset($payload['invoice']) ? $payload['invoice'] : null;
+        $eventType = isset($payload['event_type']) ? $payload['event_type'] : 'unknown';
+        $eventId = isset($payload['id']) ? $payload['id'] : 'unknown';
 
         if( empty( $invoiceHandle ) ) {
+            $this->logWebhook('Rejected: missing invoice field. event_type=' . $eventType . ', id=' . $eventId . ', remote=' . $remoteAddr, 'warning');
             return NULL;
         }
 
@@ -354,59 +419,147 @@ class plgVmPaymentReepay extends vmPSPlugin {
         }
 
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_service.php';
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_verifier.php';
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_secret_store.php';
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_dispatcher.php';
 
+        $testMode = (intval($method->test_mode) != 0);
         $privateKey = (intval($method->test_mode) == 0) ?
         $method->private_key_live : $method->private_key_test;
 
         $reepayService = new ReepayService(trim($privateKey));
 
+        $secretStore = new ReepayWebhookMethodSecretStore($method, $testMode ? 'test' : 'live');
+        $verifier = new ReepayWebhookVerifier($secretStore, function () use ($reepayService) {
+            return $reepayService->getWebhookSecret();
+        });
+
+        $this->logWebhook('Received: event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle . ', pm=' . $virtuemart_paymentmethod_id . ', mode=' . ($testMode ? 'test' : 'live') . ', remote=' . $remoteAddr, 'info');
+
+        if (!$verifier->verify($payload)) {
+            // Unverifiable notification: reject before any order lookup or status
+            // change, and don't disclose why (missing fields vs. bad signature vs.
+            // secret unavailable all look the same from the outside) to the caller -
+            // but it's safe and useful to record the non-sensitive context here.
+            $this->logWebhook('Rejected: signature verification failed. event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle . ', pm=' . $virtuemart_paymentmethod_id, 'warning');
+            return NULL;
+        }
+
+        $this->logWebhook('Verified: signature OK. event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle, 'info');
+
+        $dispatchTable = ReepayWebhookDispatcher::buildTable($method);
+
+        // Fast-path: skip API call if event type is unknown
+        if (!isset($dispatchTable[$eventType])) {
+            $this->logWebhook('Skipped: unrecognised event_type=' . $eventType . ', invoice=' . $invoiceHandle, 'info');
+            return NULL;
+        }
+
         // check if invoice exists in Frisbii Payments
         $invoice = $reepayService->getInvoice($invoiceHandle);
 
-        if(empty($invoice) ) {
-           return NULL;
+        if (empty($invoice)) {
+            $this->logWebhook('Stopped: getInvoice() returned no response for invoice=' . $invoiceHandle, 'warning');
+            return NULL;
         }
 
-        if ($invoice['status'] !== 'success' || !in_array($invoice['body']['state'], ['authorized', 'settled'])) {
-            return FALSE;
+        if ($invoice['status'] !== 'success') {
+            $this->logWebhook('Stopped: getInvoice() returned non-success status for invoice=' . $invoiceHandle . ' (status=' . $invoice['status'] . ')', 'warning');
+            return NULL;
         }
+
+        $invoiceState = $invoice['body']['state'] ?? 'n/a';
 
         $virtuemart_order_id = VirtueMartModelOrders::getOrderIdByOrderNumber($invoiceHandle);
 
         $payment_data = $this->getDataByOrderId($virtuemart_order_id);
+        $currentPaymentStatus = is_object($payment_data) ? $payment_data->payment_status : null;
 
-        if( is_object($payment_data) && 'pending' === $payment_data->payment_status) {
+        $config = ReepayWebhookDispatcher::resolve($eventType, $invoiceState, $currentPaymentStatus, $dispatchTable, $skipReason);
 
-            $orderHistory['customer_notified'] = 1;
-
-            if ($method->instant_settle == 1) {
-                $orderHistory['order_status'] = $method->status_settled;
-                $orderHistory['comments'] = 'Webhook from Frisbii Payments gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_SETTLED');
-
-            } else {
-                $orderHistory['order_status'] = $method->status_authorized;
-                $orderHistory['comments'] = 'Webhook from Frisbii Payments gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_AUTHORIZED');
+        if ($config === null) {
+            if ($skipReason === 'state_mismatch') {
+                $this->logWebhook('Skipped: event_type=' . $eventType . ' but invoice state=' . $invoiceState . ' (expected ' . implode('/', $dispatchTable[$eventType]['expectedInvoiceStates']) . '), invoice=' . $invoiceHandle, 'info');
+                return FALSE;
             }
-
-            $modelOrder = VmModel::getModel('orders');
-
-            $modelOrder->updateStatusForOneOrder($virtuemart_order_id, $orderHistory, false);
-
-            $response_fields['virtuemart_order_id'] = $virtuemart_order_id;
-            $response_fields['payment_status'] = $invoice['body']['state'];
-
-            $payment_data = $this->getDataByOrderId($virtuemart_order_id);
-
-            $response_fields['id'] = $payment_data->id;
-
-            $this->storePSPluginInternalData($response_fields, 'id', true);
-
-            $cart = VirtueMartCart::getCart();
-
-            $cart->emptyCart();
-
+            $this->logWebhook('Skipped: event_type=' . $eventType . ' but payment_status=' . ($currentPaymentStatus ?? 'n/a') . ' (no transition needed), invoice=' . $invoiceHandle, 'info');
+            return NULL;
         }
 
+        $this->logWebhook('Updating order_id=' . $virtuemart_order_id . ' from payment_status=' . $payment_data->payment_status . ' to ' . $config['newPaymentStatus'] . ' via event_type=' . $eventType . ', invoice=' . $invoiceHandle, 'info');
+
+        $orderHistory['customer_notified'] = 1;
+        $orderHistory['order_status']      = $config['targetOrderStatus'];
+        $orderHistory['comments']          = 'Webhook from Frisbii Payments gateway: ' . JText::_($config['orderNoteKey']);
+
+        $modelOrder = VmModel::getModel('orders');
+        $modelOrder->updateStatusForOneOrder($virtuemart_order_id, $orderHistory, false);
+
+        $response_fields['virtuemart_order_id'] = $virtuemart_order_id;
+        $response_fields['payment_status']      = $config['newPaymentStatus'];
+
+        $payment_data = $this->getDataByOrderId($virtuemart_order_id);
+        $response_fields['id'] = $payment_data->id;
+
+        $this->storePSPluginInternalData($response_fields, 'id', true);
+
+        if ($config['clearCart']) {
+            $cart = VirtueMartCart::getCart();
+            $cart->emptyCart();
+        }
+
+    }
+
+    /**
+     * Writes a non-sensitive trace line for the webhook flow to
+     * administrator/logs/reepay_webhook.php, to make it possible to follow whether
+     * a notification was received, verified, and acted on without needing to
+     * reproduce the request. Never pass the private key, webhook secret, raw
+     * signature, or full request payload here.
+     *
+     * @param string $message
+     * @param string $level 'info'|'warning'|'error'
+     */
+    private function logWebhook($message, $level = 'info') {
+        $this->writeLog('reepay_webhook', 'Reepay webhook: ' . $message, $level);
+    }
+
+    /**
+     * Writes a non-sensitive checkout-session trace line (see ReepayCheckoutLog) to
+     * administrator/logs/reepay_checkout.php. Never pass customer data, URLs, keys
+     * or the raw request/response here.
+     *
+     * @param string $message
+     * @param string $level 'info'|'warning'|'error'
+     */
+    private function logCheckout($message, $level = 'info') {
+        $this->writeLog('reepay_checkout', 'Reepay ' . $message, $level);
+    }
+
+    /**
+     * Joomla text-file log in the administrator logs folder. Joomla starts these .php
+     * files with a die() header, so they can't be downloaded over the web.
+     *
+     * @param string $category Also used as the file name (<category>.php)
+     * @param string $message
+     * @param string $level 'info'|'warning'|'error'
+     */
+    private function writeLog($category, $message, $level = 'info') {
+        static $registered = [];
+
+        if (empty($registered[$category])) {
+            \Joomla\CMS\Log\Log::addLogger(['text_file' => $category . '.php'], \Joomla\CMS\Log\Log::ALL, [$category]);
+            $registered[$category] = true;
+        }
+
+        $priority = \Joomla\CMS\Log\Log::INFO;
+        if ($level === 'warning') {
+            $priority = \Joomla\CMS\Log\Log::WARNING;
+        } elseif ($level === 'error') {
+            $priority = \Joomla\CMS\Log\Log::ERROR;
+        }
+
+        \Joomla\CMS\Log\Log::add($message, $priority, $category);
     }
 
     /**

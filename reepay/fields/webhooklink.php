@@ -17,12 +17,15 @@ class JFormFieldWebhookLink extends JFormField
 
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR .'vmpayment/reepay/reepay/helpers/reepay_service.php';
 
-        $cid = vRequest::getvar('cid', NULL, 'array');
+        $virtuemart_paymentmethod_id = $this->form->getValue('virtuemart_paymentmethod_id');
 
-        if (is_Array($cid)) {
-            $virtuemart_paymentmethod_id = $cid[0];
-        } else {
-            $virtuemart_paymentmethod_id = $cid;
+        if (empty($virtuemart_paymentmethod_id)) {
+            $virtuemart_paymentmethod_id = $this->form->getData()->get('virtuemart_paymentmethod_id');
+        }
+
+        if (empty($virtuemart_paymentmethod_id)) {
+            $cid = JFactory::getApplication()->input->get('cid', [], 'array');
+            $virtuemart_paymentmethod_id = !empty($cid) ? (int) $cid[0] : 0;
         }
 
         $query = "SELECT payment_params FROM `#__virtuemart_paymentmethods` WHERE  virtuemart_paymentmethod_id = '" . $virtuemart_paymentmethod_id . "'";
@@ -30,7 +33,11 @@ class JFormFieldWebhookLink extends JFormField
         $db->setQuery($query);
         $params = $db->loadResult();
 
-        $webhook_url = JURI::root() . 'index.php?option=com_virtuemart&format=raw&view=pluginresponse&task=pluginnotification&tmpl=component&pm=' . $virtuemart_paymentmethod_id;
+        $webhook_url = JURI::root() . 'index.php?option=com_virtuemart&view=pluginresponse&task=pluginnotification&pm=' . $virtuemart_paymentmethod_id;
+
+        if (empty($params)) {
+            return '<div style="color: #FF0000">Could not load payment method parameters.</div>';
+        }
 
         $payment_params = explode("|", $params);
         foreach ($payment_params as $payment_param) {
@@ -41,7 +48,7 @@ class JFormFieldWebhookLink extends JFormField
             $payment_params[$param[0]] = substr($param[1], 1, -1);
         }
 
-        $reepayService = new ReepayService(trim($payment_params['private_key_test']));
+        $reepayService = new ReepayService(trim($payment_params['private_key_test'] ?? ''));
 
         $result = $reepayService->getWebhooks();
 
@@ -69,7 +76,7 @@ class JFormFieldWebhookLink extends JFormField
             $output .= "<div style=\"color: #FF0000\" > Webhook for test account is not set. Please use this url to set it up:</div> {$webhook_url}";
         }
 
-        $reepayService = new ReepayService(trim($payment_params['private_key_live']));
+        $reepayService = new ReepayService(trim($payment_params['private_key_live'] ?? ''));
 
         $result = $reepayService->getWebhooks();
 

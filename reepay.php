@@ -311,6 +311,8 @@ class plgVmPaymentReepay extends vmPSPlugin {
         $this->getPaymentCurrency($method);
         $currency_code_3 = shopFunctions::getCurrencyByID($method->payment_currency, 'currency_code_3');
 
+        $orderlink = '';
+
         // check if order has not already been updated with webhook
         if ('pending' == $payment_data->payment_status) {
             // the payment itself should send the parameter needed.
@@ -373,7 +375,6 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $cart->emptyCart();
 
-            $orderlink='';
             $tracking = VmConfig::get('ordertracking','guests');
             if($tracking !='none' and !($tracking =='registered' and empty($order['details']['BT']->virtuemart_user_id) )) {
 
@@ -398,6 +399,8 @@ class plgVmPaymentReepay extends vmPSPlugin {
     }
 
     function plgVmOnPaymentNotification() {
+        file_put_contents(__DIR__ . '/reepay_debug.log', date('Y-m-d H:i:s') . ' [WEBHOOK] plgVmOnPaymentNotification called, raw=' . file_get_contents('php://input') . PHP_EOL, FILE_APPEND);
+
         $input = JFactory::getApplication()->input->json;
         $payload = json_decode($input->getRaw(), true);
         $remoteAddr = JFactory::getApplication()->input->server->getString('REMOTE_ADDR', 'unknown');
@@ -428,6 +431,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_service.php';
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_verifier.php';
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_secret_store.php';
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_dispatcher.php';
 
         $testMode = (intval($method->test_mode) != 0);
         $privateKey = (intval($method->test_mode) == 0) ?
@@ -453,57 +457,65 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         $this->logWebhook('Verified: signature OK. event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle, 'info');
 
+        $dispatchTable = ReepayWebhookDispatcher::buildTable($method);
+
+        // Fast-path: skip API call if event type is unknown
+        if (!isset($dispatchTable[$eventType])) {
+            $this->logWebhook('Skipped: unrecognised event_type=' . $eventType . ', invoice=' . $invoiceHandle, 'info');
+            return NULL;
+        }
+
         // check if invoice exists in Frisbii Payments
         $invoice = $reepayService->getInvoice($invoiceHandle);
 
-        if(empty($invoice) ) {
-           $this->logWebhook('Stopped: getInvoice() returned no response for invoice=' . $invoiceHandle, 'warning');
-           return NULL;
+        if (empty($invoice)) {
+            $this->logWebhook('Stopped: getInvoice() returned no response for invoice=' . $invoiceHandle, 'warning');
+            return NULL;
         }
 
-        if ($invoice['status'] !== 'success' || !in_array($invoice['body']['state'], ['authorized', 'settled'])) {
-            $this->logWebhook('Stopped: invoice=' . $invoiceHandle . ' is not authorized/settled (status=' . $invoice['status'] . ', state=' . ($invoice['body']['state'] ?? 'n/a') . ')', 'info');
-            return FALSE;
+        if ($invoice['status'] !== 'success') {
+            $this->logWebhook('Stopped: getInvoice() returned non-success status for invoice=' . $invoiceHandle . ' (status=' . $invoice['status'] . ')', 'warning');
+            return NULL;
         }
+
+        $invoiceState = $invoice['body']['state'] ?? 'n/a';
 
         $virtuemart_order_id = VirtueMartModelOrders::getOrderIdByOrderNumber($invoiceHandle);
 
         $payment_data = $this->getDataByOrderId($virtuemart_order_id);
+        $currentPaymentStatus = is_object($payment_data) ? $payment_data->payment_status : null;
 
-        if( is_object($payment_data) && 'pending' === $payment_data->payment_status) {
+        $config = ReepayWebhookDispatcher::resolve($eventType, $invoiceState, $currentPaymentStatus, $dispatchTable, $skipReason);
 
-            $this->logWebhook('Updating order_id=' . $virtuemart_order_id . ' (invoice=' . $invoiceHandle . ') to state=' . $invoice['body']['state'], 'info');
-
-            $orderHistory['customer_notified'] = 1;
-
-            if ($method->instant_settle == 1) {
-                $orderHistory['order_status'] = $method->status_settled;
-                $orderHistory['comments'] = 'Webhook from Frisbii Payments gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_SETTLED');
-
-            } else {
-                $orderHistory['order_status'] = $method->status_authorized;
-                $orderHistory['comments'] = 'Webhook from Frisbii Payments gateway: ' . JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_AUTHORIZED');
+        if ($config === null) {
+            if ($skipReason === 'state_mismatch') {
+                $this->logWebhook('Skipped: event_type=' . $eventType . ' but invoice state=' . $invoiceState . ' (expected ' . implode('/', $dispatchTable[$eventType]['expectedInvoiceStates']) . '), invoice=' . $invoiceHandle, 'info');
+                return FALSE;
             }
+            $this->logWebhook('Skipped: event_type=' . $eventType . ' but payment_status=' . ($currentPaymentStatus ?? 'n/a') . ' (no transition needed), invoice=' . $invoiceHandle, 'info');
+            return NULL;
+        }
 
-            $modelOrder = VmModel::getModel('orders');
+        $this->logWebhook('Updating order_id=' . $virtuemart_order_id . ' from payment_status=' . $payment_data->payment_status . ' to ' . $config['newPaymentStatus'] . ' via event_type=' . $eventType . ', invoice=' . $invoiceHandle, 'info');
 
-            $modelOrder->updateStatusForOneOrder($virtuemart_order_id, $orderHistory, false);
+        $orderHistory['customer_notified'] = 1;
+        $orderHistory['order_status']      = $config['targetOrderStatus'];
+        $orderHistory['comments']          = 'Webhook from Frisbii Payments gateway: ' . JText::_($config['orderNoteKey']);
 
-            $response_fields['virtuemart_order_id'] = $virtuemart_order_id;
-            $response_fields['payment_status'] = $invoice['body']['state'];
+        $modelOrder = VmModel::getModel('orders');
+        $modelOrder->updateStatusForOneOrder($virtuemart_order_id, $orderHistory, false);
 
-            $payment_data = $this->getDataByOrderId($virtuemart_order_id);
+        $response_fields['virtuemart_order_id'] = $virtuemart_order_id;
+        $response_fields['payment_status']      = $config['newPaymentStatus'];
 
-            $response_fields['id'] = $payment_data->id;
+        $payment_data = $this->getDataByOrderId($virtuemart_order_id);
+        $response_fields['id'] = $payment_data->id;
 
-            $this->storePSPluginInternalData($response_fields, 'id', true);
+        $this->storePSPluginInternalData($response_fields, 'id', true);
 
+        if ($config['clearCart']) {
             $cart = VirtueMartCart::getCart();
-
             $cart->emptyCart();
-
-        } else {
-            $this->logWebhook('Skipped: order_id=' . $virtuemart_order_id . ' (invoice=' . $invoiceHandle . ') is not in "pending" state, no update needed', 'info');
         }
 
     }

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <extension version="2.5" type="plugin" method="upgrade" group="vmpayment">
     <name>Frisbii Payments Gateway for Virtuemart</name>
-    <creationDate>July 2022</creationDate>
+    <creationDate>2026-11-25</creationDate>
     <author>Frisbii Payments</author>
     <authorUrl>https://reepay.eu</authorUrl>
     <copyright>Copyright (C) 2022 Frisbii Payments All rights reserved.</copyright>

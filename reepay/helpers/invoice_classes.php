@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/reepay_customer_handle.php';
+
 interface InvoiceDataInterface {
     public function toArray();
 }
@@ -212,9 +214,14 @@ class InvoiceOrderCustomerData implements InvoiceDataInterface
 
     public function toArray() {
 
+        // No fallback to the email or phone number: the buyer could choose the customer record with it
+        if (!ReepayCustomerHandle::isValid($this->handle)) {
+            throw new InvalidArgumentException('A valid Frisbii customer handle is required');
+        }
+
         return [
             'test' => $this->test,
-            'handle' => $this->handle ?? $this->creatHandle(),
+            'handle' => $this->handle,
             'email' => $this->email,
             'address' => $this->address,
             'address2' => $this->address2,
@@ -227,25 +234,6 @@ class InvoiceOrderCustomerData implements InvoiceDataInterface
         ];
     }
 
-    private function creatHandle() {
-        $handle = $this->email ??
-            str_replace('+','', $this->phone_number) ??
-            $this->generateHandle();
-
-        if($this->validateHandle($handle)) {
-            return $handle;
-        } else {
-            return $this->generateHandle();
-        }
-    }
-
-    private function generateHandle() {
-        return 'cust-' . time();
-    }
-
-    private function validateHandle($handle) {
-        return preg_match('/^[a-zA-Z0-9_\.\-@]*$/', $handle);
-    }
 }
 
 class InvoiceOrderData implements InvoiceDataInterface

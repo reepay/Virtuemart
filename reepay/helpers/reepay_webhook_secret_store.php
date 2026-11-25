@@ -18,6 +18,7 @@ class ReepayWebhookMethodSecretStore implements ReepayWebhookSecretStoreInterfac
     private $method;
     private $secretField;
     private $expiresField;
+    private $refreshedField;
 
     /** @var callable */
     private $now;
@@ -27,7 +28,13 @@ class ReepayWebhookMethodSecretStore implements ReepayWebhookSecretStoreInterfac
         $this->method = $method;
         $this->secretField = 'reepay_webhook_secret_' . $mode;
         $this->expiresField = $this->secretField . '_expires';
+        $this->refreshedField = $this->secretField . '_refreshed';
         $this->now = $now ?: 'time';
+    }
+
+    public function getLastRefreshAt()
+    {
+        return isset($this->method->{$this->refreshedField}) ? (int) $this->method->{$this->refreshedField} : 0;
     }
 
     public function getCachedSecret()
@@ -45,7 +52,10 @@ class ReepayWebhookMethodSecretStore implements ReepayWebhookSecretStoreInterfac
     public function setCachedSecret($secret, $ttlSeconds)
     {
         $this->method->{$this->secretField} = $secret;
-        $this->method->{$this->expiresField} = call_user_func($this->now) + $ttlSeconds;
+        $now = call_user_func($this->now);
+        $this->method->{$this->secretField} = $secret;
+        $this->method->{$this->expiresField} = $now + $ttlSeconds;
+        $this->method->{$this->refreshedField} = $now;
         $this->storeExistingRow();
     }
 
@@ -53,6 +63,7 @@ class ReepayWebhookMethodSecretStore implements ReepayWebhookSecretStoreInterfac
     {
         $this->method->{$this->secretField} = '';
         $this->method->{$this->expiresField} = 0;
+        $this->method->{$this->refreshedField} = call_user_func($this->now);
         $this->storeExistingRow();
     }
 

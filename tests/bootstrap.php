@@ -9,6 +9,11 @@ require_once __DIR__ . '/../reepay/helpers/reepay_webhook_dispatcher.php';
 require_once __DIR__ . '/../reepay/helpers/invoice_classes.php';
 require_once __DIR__ . '/../reepay/helpers/reepay_order_lines.php';
 require_once __DIR__ . '/../reepay/helpers/reepay_checkout_log.php';
+require_once __DIR__ . '/../reepay/helpers/reepay_invoice_matcher.php';
+require_once __DIR__ . '/../reepay/helpers/reepay_method_resolver.php';
+require_once __DIR__ . '/../reepay/helpers/reepay_invoice_status.php';
+require_once __DIR__ . '/../reepay/helpers/reepay_order_access.php';
+require_once __DIR__ . '/../reepay/helpers/reepay_customer_handle.php';
 
 require_once __DIR__ . '/Fakes/FakeSecretStore.php';
 require_once __DIR__ . '/Fakes/FakeConfigMethod.php';

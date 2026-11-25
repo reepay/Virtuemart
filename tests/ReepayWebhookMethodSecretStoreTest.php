@@ -67,6 +67,42 @@ class ReepayWebhookMethodSecretStoreTest extends TestCase
         $this->assertGreaterThan($storeCallsBeforeInvalidate, $method->storeCallCount);
     }
 
+    public function testLastRefreshIsZeroWhenNeverRefreshed()
+    {
+        $store = new ReepayWebhookMethodSecretStore(new FakeConfigMethod(), 'test');
+
+        $this->assertSame(0, $store->getLastRefreshAt());
+    }
+
+    public function testSetCachedSecretRecordsTheRefreshTimeInTheSameWrite()
+    {
+        $method = new FakeConfigMethod();
+        $now = 1_700_000_000;
+        $store = new ReepayWebhookMethodSecretStore($method, 'test', function () use ($now) {
+            return $now;
+        });
+
+        $store->setCachedSecret('a-secret', 600);
+
+        $this->assertSame($now, $store->getLastRefreshAt());
+        $this->assertSame($now, $method->reepay_webhook_secret_test_refreshed);
+        $this->assertSame(1, $method->storeCallCount, 'secret, expiry and refresh time are saved in one write');
+    }
+
+    public function testInvalidateAlsoRecordsTheRefreshTime()
+    {
+        $method = new FakeConfigMethod();
+        $clock = ['now' => 1_700_000_000];
+        $store = new ReepayWebhookMethodSecretStore($method, 'test', function () use (&$clock) {
+            return $clock['now'];
+        });
+
+        $clock['now'] += 42;
+        $store->invalidate();
+
+        $this->assertSame(1_700_000_042, $store->getLastRefreshAt(), 'a failed refresh must also count, so a down API is not hammered');
+    }
+
     public function testTestAndLiveModesUseSeparateCacheSlotsOnTheSameMethod()
     {
         $method = new FakeConfigMethod();

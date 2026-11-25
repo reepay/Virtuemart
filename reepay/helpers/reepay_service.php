@@ -42,7 +42,7 @@ class ReepayService
     {
         $amount = $this->prepareAmount($amount);
         $data = [ 'amount' => $amount ];
-        return $this->client->request('https://api.reepay.com/v1/charge/' . $invoice_handle . '/settle', $data);
+        return $this->client->request(self::chargeUrl($invoice_handle, 'settle'), $data);
     }
 
     /**
@@ -50,8 +50,28 @@ class ReepayService
      * @return mixed
      */
     public function getInvoice($invoice_handle) {
-        return $this->client->request('https://api.reepay.com/v1/invoice/' . $invoice_handle);
+        return $this->client->request(self::invoiceUrl($invoice_handle));
      }
+
+    /**
+     * The handle is encoded as one path segment, so it cannot point the request
+     * (made with the merchant's key) at another API path.
+     *
+     * @param string $invoice_handle
+     * @return string
+     */
+    public static function invoiceUrl($invoice_handle) {
+        return 'https://api.reepay.com/v1/invoice/' . rawurlencode((string) $invoice_handle);
+    }
+
+    /**
+     * @param string $invoice_handle
+     * @param string $action 'settle' or 'cancel'
+     * @return string
+     */
+    public static function chargeUrl($invoice_handle, $action) {
+        return 'https://api.reepay.com/v1/charge/' . rawurlencode((string) $invoice_handle) . '/' . $action;
+    }
 
     /**
      * @param $invoice_handle
@@ -77,7 +97,7 @@ class ReepayService
             'invoice' => $invoice_handle,
         ];
 
-        return $this->client->request('https://api.reepay.com/v1/charge/'. $invoice_handle .'/cancel', $data);
+        return $this->client->request(self::chargeUrl($invoice_handle, 'cancel'), $data);
     }
 
     /**

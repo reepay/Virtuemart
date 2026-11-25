@@ -1,5 +1,5 @@
 # Frisbii Pay
-Lastest version: 1.3
+Lastest version: 1.4
 
 ## Joomla Virtuemart
 Payment Plugin for Joomla Virtuemart 3.x and 4.x
@@ -19,6 +19,9 @@ Payment Plugin for Joomla Virtuemart 3.x and 4.x
  - php >= 7.0
 
 ## Changelog
+v 1.4
+- [Fix] - Payment improvements 2.
+
 v 1.3
 - [Fix] - Payment improvements.
 - [Fix] - Frisbii webhook authentication with HMAC-SHA256.

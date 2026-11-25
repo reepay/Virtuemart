@@ -1,4 +1,7 @@
 ## Changelog
+v 1.4
+- [Fix] - Payment improvements 2.
+
 v 1.3
 - [Fix] - Payment improvements.
 - [Fix] - Frisbii webhook authentication with HMAC-SHA256.

@@ -73,6 +73,17 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         $address = ((isset($order['details']['BT'])) ? $order['details']['BT'] : $order['details']['ST']);
 
+        // The buyer types the email, so it must not decide which Frisbii customer the order belongs to.
+        // An order created in the admin has the admin as user, so it is handled like a guest order.
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_customer_handle.php';
+        $earlierAttempt = $this->getDataByOrderNumber($order['details']['BT']->order_number);
+        $customerHandle = ReepayCustomerHandle::forOrder(
+            ReepayCustomerHandle::shopKey(JFactory::getConfig()->get('secret')),
+            JFactory::getApplication()->isClient('site') ? $order['details']['BT']->virtuemart_user_id : 0,
+            $order['details']['BT']->order_number,
+            is_object($earlierAttempt) ? $earlierAttempt->reepay_request_json : null
+        );
+
         $acceptUrl = JROUTE::_(JURI::root() . 'index.php?option=com_virtuemart&view=pluginresponse&task=pluginresponsereceived&pm=' . $order['details']['BT']->virtuemart_paymentmethod_id . '&ordernumber=' . $order['details']['BT']->order_number);
         $cancelUrl = JROUTE::_(JURI::root() . 'index.php?option=com_virtuemart&view=vmplg&task=pluginUserPaymentCancel&on=' . $order['details']['BT']->order_number . '&pm=' . $order['details']['BT']->virtuemart_paymentmethod_id);
 
@@ -118,7 +129,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
             ->amount($totalInPaymentCurrency)
             ->currency($currency_code_3)
             ->customer((new InvoiceOrderCustomerData())
-                ->handle($address->email)
+                ->handle($customerHandle)
                 ->test($testMode)
                 ->phoneNumber(['customer']['phone_number'] ?? null)
                 ->email($address->email)
@@ -172,7 +183,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $dbValues['virtuemart_order_id'] = $order['details']['BT']->virtuemart_order_id;
             $dbValues['order_number'] = $order['details']['BT']->order_number;
-            $dbValues['virtuemart_paymentmethod_id'] = $cart->virtuemart_paymentmethod_id;
+            $dbValues['virtuemart_paymentmethod_id'] = $order['details']['BT']->virtuemart_paymentmethod_id;
             $dbValues['payment_name'] = $this->renderPluginName($method);
             $dbValues['payment_order_total'] = $totalInPaymentCurrency;
             $dbValues['payment_status'] = 'pending';
@@ -183,6 +194,14 @@ class plgVmPaymentReepay extends vmPSPlugin {
             $dbValues['reepay_request_json'] = json_encode($input);
 
             $this->storePSPluginInternalData($dbValues);
+
+            // Remember which session placed the order: only that session may see it on the accept URL
+            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_order_access.php';
+            $session = JFactory::getSession();
+            $session->set(ReepayOrderAccess::SESSION_KEY, ReepayOrderAccess::remember(
+                $session->get(ReepayOrderAccess::SESSION_KEY, []),
+                $order['details']['BT']->order_number
+            ));
 
             $returnValue = 2;
 
@@ -292,13 +311,40 @@ class plgVmPaymentReepay extends vmPSPlugin {
             return;
         }
 
-        if (!($method = $this->getVmPluginMethod($virtuemart_paymentmethod_id))) {
+        // pm only routes the request to this plugin; the order's own method is used below
+        if (!($requestMethod = $this->getVmPluginMethod($virtuemart_paymentmethod_id))) {
             return NULL; // Another method was selected, do nothing
+        }
+        if (!$this->selectedThisElement($requestMethod->payment_element)) {
+            return NULL;
+        }
+
+        // Default for everyone who may not see the order, and for unknown orders
+        $html = '<div class="post_payment_neutral">' . vmText::_('VMPAYMENT_REEPAY_RESPONSE_NEUTRAL') . '</div>';
+
+        // Key, test mode and statuses come from the payment method stored on the order
+        $method = $this->getOrderMethod($virtuemart_paymentmethod_id, $payment_data,
+            vRequest::getString('invoice'), 'customer return');
+        if (!$method) {
+            return NULL;
         }
 
         $modelOrder = VmModel::getModel('orders');
 
         $order = $modelOrder->getOrder( $virtuemart_order_id );
+
+        // The order number in the URL can be guessed, so the order is only shown to the session that
+        // placed it or to its logged-in owner. The payment is registered either way.
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_order_access.php';
+        $mayShowOrder = ReepayOrderAccess::mayShowOrder(
+            JFactory::getSession()->get(ReepayOrderAccess::SESSION_KEY, []),
+            $order['details']['BT']->order_number,
+            (int) JFactory::getUser()->get('id'),
+            $order['details']['BT']->virtuemart_user_id
+        );
+        if (!$mayShowOrder) {
+            $this->logWebhook('Note (customer return): order not shown, the session did not place invoice=' . $order['details']['BT']->order_number, 'info');
+        }
 
         $this->getPaymentCurrency($method);
         $currency_code_3 = shopFunctions::getCurrencyByID($method->payment_currency, 'currency_code_3');
@@ -307,23 +353,13 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         // check if order has not already been updated with webhook
         if ('pending' == $payment_data->payment_status) {
-            // the payment itself should send the parameter needed.
-            $virtuemart_paymentmethod_id = vRequest::getInt('pm', 0);
-            if (!$virtuemart_paymentmethod_id) {
-                return;
-            }
-            if (!($method = $this->getVmPluginMethod($virtuemart_paymentmethod_id))) {
-                return NULL; // Another method was selected, do nothing
-            }
-            if (!$this->selectedThisElement($method->payment_element)) {
-                return FALSE;
-            }
-
             if (empty(vRequest::getString('invoice'))) {
                 return FALSE;
             }
 
             require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_service.php';
+            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_invoice_matcher.php';
+            require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_invoice_status.php';
 
             $privateKey = (intval($method->test_mode) == 0) ?
             $method->private_key_live : $method->private_key_test;
@@ -339,23 +375,38 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $virtuemart_order_id = VirtueMartModelOrders::getOrderIdByOrderNumber(vRequest::getString('invoice'));
 
-            $orderHistory['customer_notified'] = 1;
+            // The invoice must be for this order's amount and currency, not just in a paid state
+            $payment_data = $this->getDataByOrderId($virtuemart_order_id);
+            $mismatch = ReepayInvoiceMatcher::mismatchReason(
+                $invoice['body'],
+                is_object($payment_data) ? $payment_data->payment_order_total : null,
+                is_object($payment_data) ? $payment_data->payment_currency : null
+            );
 
-            if ($method->instant_settle == 1) {
-                $orderHistory['order_status'] = $method->status_settled;
-                $orderHistory['comments'] = JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_SETTLED');
-
-            } else {
-                $orderHistory['order_status'] = $method->status_authorized;
-                $orderHistory['comments'] = JText::_('VMPAYMENT_REEPAY_ORDER_COMMENT_PAYMENT_AUTHORIZED');
+            if ($mismatch !== null) {
+                $this->logWebhook('Stopped (customer return): ' . $mismatch
+                    . ' for invoice=' . vRequest::getString('invoice')
+                    . ' expected=' . (is_object($payment_data) ? ReepayInvoiceMatcher::toMinorUnits($payment_data->payment_order_total) . ' ' . $payment_data->payment_currency : 'n/a')
+                    . ' received=' . ($invoice['body']['amount'] ?? 'n/a') . ' ' . ($invoice['body']['currency'] ?? 'n/a'), 'warning');
+                return FALSE;
             }
+
+            // The status follows what Frisbii reports for the invoice, not the instant-settle setting
+            $status = ReepayInvoiceStatus::forCustomerReturn($invoice['body'], $method);
+            if ($status === null) {
+                return FALSE;
+            }
+
+            $orderHistory['customer_notified'] = 1;
+            $orderHistory['order_status'] = $status['order_status'];
+            $orderHistory['comments'] = JText::_($status['comment_key']);
 
             $modelOrder = VmModel::getModel('orders');
 
             $modelOrder->updateStatusForOneOrder($virtuemart_order_id, $orderHistory, false);
 
             $response_fields['virtuemart_order_id'] = $virtuemart_order_id;
-            $response_fields['payment_status'] = $invoice['body']['state'];
+            $response_fields['payment_status'] = $status['payment_status'];
 
             $payment_data = $this->getDataByOrderId($virtuemart_order_id);
 
@@ -363,24 +414,26 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
             $this->storePSPluginInternalData($response_fields, 'id', true);
 
-            $cart = VirtueMartCart::getCart();
+            if ($mayShowOrder) {
+                $cart = VirtueMartCart::getCart();
+                $cart->emptyCart();
 
-            $cart->emptyCart();
-
-            $tracking = VmConfig::get('ordertracking','guests');
-            if($tracking !='none' and !($tracking =='registered' and empty($order['details']['BT']->virtuemart_user_id) )) {
-
-                $orderlink = 'index.php?option=com_virtuemart&view=orders&layout=details&order_number=' . $order['details']['BT']->order_number;
-                if ($tracking == 'guestlink' or ($tracking == 'guests' and empty($order['details']['BT']->virtuemart_user_id))) {
-                    $orderlink .= '&order_pass=' . $order['details']['BT']->order_pass;
-                }
+                $orderlink = ReepayOrderAccess::orderLink(
+                    VmConfig::get('ordertracking', 'guests'),
+                    $order['details']['BT']->order_number,
+                    $order['details']['BT']->order_pass,
+                    $order['details']['BT']->virtuemart_user_id
+                );
             }
 
         }
 
+        if (!$mayShowOrder) {
+            return true;
+        }
+
         $html = $this->renderByLayout('response', array(
             'order_number' =>$order['details']['BT']->order_number,
-            'order_pass' =>$order['details']['BT']->order_pass,
             'payment_name' => $method->payment_name,
             'displayTotalInPaymentCurrency' => $currency_code_3,
             'orderlink' => $orderlink,
@@ -414,14 +467,32 @@ class plgVmPaymentReepay extends vmPSPlugin {
             return;
         }
 
-        if (!($method = $this->getVmPluginMethod($virtuemart_paymentmethod_id))) {
+        // pm only routes the request to this plugin; the order's own method is used below
+        if (!($requestMethod = $this->getVmPluginMethod($virtuemart_paymentmethod_id))) {
             return NULL; // Another method was selected, do nothing
+        }
+        if (!$this->selectedThisElement($requestMethod->payment_element)) {
+            return NULL;
         }
 
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_service.php';
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_verifier.php';
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_secret_store.php';
         require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_webhook_dispatcher.php';
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_invoice_matcher.php';
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_invoice_status.php';
+
+        // Read-only lookup of the order the webhook is about, so its own payment method
+        // (key, test mode, webhook secret, statuses) is used. Nothing is changed before
+        // the signature is verified.
+        $virtuemart_order_id = VirtueMartModelOrders::getOrderIdByOrderNumber($invoiceHandle);
+        $payment_data = $virtuemart_order_id ? $this->getDataByOrderId($virtuemart_order_id) : null;
+
+        $method = $this->getOrderMethod($virtuemart_paymentmethod_id, $payment_data, $invoiceHandle,
+            'webhook event_type=' . $eventType . ', id=' . $eventId . ', remote=' . $remoteAddr);
+        if (!$method) {
+            return NULL;
+        }
 
         $testMode = (intval($method->test_mode) != 0);
         $privateKey = (intval($method->test_mode) == 0) ?
@@ -434,14 +505,15 @@ class plgVmPaymentReepay extends vmPSPlugin {
             return $reepayService->getWebhookSecret();
         });
 
-        $this->logWebhook('Received: event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle . ', pm=' . $virtuemart_paymentmethod_id . ', mode=' . ($testMode ? 'test' : 'live') . ', remote=' . $remoteAddr, 'info');
+        $this->logWebhook('Received: event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle . ', pm=' . $virtuemart_paymentmethod_id . ', method=' . $method->virtuemart_paymentmethod_id . ', mode=' . ($testMode ? 'test' : 'live') . ', remote=' . $remoteAddr, 'info');
 
         if (!$verifier->verify($payload)) {
-            // Unverifiable notification: reject before any order lookup or status
-            // change, and don't disclose why (missing fields vs. bad signature vs.
+            // Unverifiable notification: reject before any status change,
+            // and don't disclose why (missing fields vs. bad signature vs.
             // secret unavailable all look the same from the outside) to the caller -
             // but it's safe and useful to record the non-sensitive context here.
-            $this->logWebhook('Rejected: signature verification failed. event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle . ', pm=' . $virtuemart_paymentmethod_id, 'warning');
+            $this->logWebhook('Rejected: signature verification failed. event_type=' . $eventType . ', id=' . $eventId . ', invoice=' . $invoiceHandle . ', pm=' . $virtuemart_paymentmethod_id
+                . ($verifier->refreshSkipped() ? ' (secret refresh skipped: last refresh less than ' . ReepayWebhookVerifier::REFRESH_MIN_INTERVAL . 's ago)' : ''), 'warning');
             return NULL;
         }
 
@@ -470,10 +542,24 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
         $invoiceState = $invoice['body']['state'] ?? 'n/a';
 
-        $virtuemart_order_id = VirtueMartModelOrders::getOrderIdByOrderNumber($invoiceHandle);
-
+        // Reload: the row may have changed while the signature and invoice were checked
         $payment_data = $this->getDataByOrderId($virtuemart_order_id);
         $currentPaymentStatus = is_object($payment_data) ? $payment_data->payment_status : null;
+
+        // The invoice must be for this order's amount and currency, not just in the expected state
+        $mismatch = ReepayInvoiceMatcher::mismatchReason(
+            $invoice['body'] ?? [],
+            is_object($payment_data) ? $payment_data->payment_order_total : null,
+            is_object($payment_data) ? $payment_data->payment_currency : null
+        );
+
+        if ($mismatch !== null) {
+            $this->logWebhook('Stopped: amount/currency mismatch (' . $mismatch . ') for event_type=' . $eventType
+                . ', invoice=' . $invoiceHandle
+                . ', expected=' . (is_object($payment_data) ? ReepayInvoiceMatcher::toMinorUnits($payment_data->payment_order_total) . ' ' . $payment_data->payment_currency : 'n/a')
+                . ', received=' . ($invoice['body']['amount'] ?? 'n/a') . ' ' . ($invoice['body']['currency'] ?? 'n/a'), 'warning');
+            return FALSE;
+        }
 
         $config = ReepayWebhookDispatcher::resolve($eventType, $invoiceState, $currentPaymentStatus, $dispatchTable, $skipReason);
 
@@ -486,13 +572,34 @@ class plgVmPaymentReepay extends vmPSPlugin {
             return NULL;
         }
 
-        $this->logWebhook('Updating order_id=' . $virtuemart_order_id . ' from payment_status=' . $payment_data->payment_status . ' to ' . $config['newPaymentStatus'] . ' via event_type=' . $eventType . ', invoice=' . $invoiceHandle, 'info');
+        // Follow the real invoice: an already settled invoice is settled, a partial refund is not a refund
+        $adjusted = ReepayInvoiceStatus::forWebhook($config, $eventType, $invoice['body'], $method);
+        $config = $adjusted['config'];
+        $amountMinor = (int) ($invoice['body']['amount'] ?? 0);
+        $refundedMinor = (int) ($invoice['body']['refunded_amount'] ?? 0);
+        $currency = (string) ($invoice['body']['currency'] ?? '');
+
+        if ($adjusted['partialRefund']) {
+            $this->logWebhook('Partial refund: refunded_amount=' . $refundedMinor . ' of amount=' . $amountMinor . ' ' . $currency
+                . ', order_id=' . $virtuemart_order_id . ' keeps payment_status=' . $payment_data->payment_status . ', invoice=' . $invoiceHandle, 'info');
+        } else {
+            $this->logWebhook('Updating order_id=' . $virtuemart_order_id . ' from payment_status=' . $payment_data->payment_status . ' to ' . $config['newPaymentStatus'] . ' via event_type=' . $eventType
+                . ' (invoice state=' . $invoiceState . ', refunded_amount=' . $refundedMinor . ' of ' . $amountMinor . '), invoice=' . $invoiceHandle, 'info');
+        }
 
         $orderHistory['customer_notified'] = 1;
         $orderHistory['order_status']      = $config['targetOrderStatus'];
-        $orderHistory['comments']          = 'Webhook from Frisbii Payments gateway: ' . JText::_($config['orderNoteKey']);
+        $orderHistory['comments']          = 'Webhook from Frisbii Payments gateway: ' . ($adjusted['partialRefund']
+            ? JText::sprintf($config['orderNoteKey'], number_format($refundedMinor / 100, 2, '.', ''), number_format($amountMinor / 100, 2, '.', ''), $currency)
+            : JText::_($config['orderNoteKey']));
 
         $modelOrder = VmModel::getModel('orders');
+
+        if ($adjusted['partialRefund']) {
+            $currentOrder = $modelOrder->getOrder($virtuemart_order_id);
+            $orderHistory['order_status'] = $currentOrder['details']['BT']->order_status;
+        }
+
         $modelOrder->updateStatusForOneOrder($virtuemart_order_id, $orderHistory, false);
 
         $response_fields['virtuemart_order_id'] = $virtuemart_order_id;
@@ -508,6 +615,44 @@ class plgVmPaymentReepay extends vmPSPlugin {
             $cart->emptyCart();
         }
 
+    }
+
+    /**
+     * Returns the Frisbii payment method stored on the order, or null (logged) when the order
+     * has no usable method. The request's pm only routes the request to this plugin and is
+     * never used for the API key, test mode, webhook secret or order statuses; when it differs
+     * from the order's method a warning is logged and the order's method is used.
+     *
+     * @param int         $requestPm    pm from the request URL
+     * @param object|null $payment_data row from #__virtuemart_payment_plg_reepay for the order
+     * @param string|null $orderNumber  invoice handle / order number, for the log
+     * @param string      $context      'customer return' or webhook details, for the log
+     * @return object|null
+     */
+    private function getOrderMethod($requestPm, $payment_data, $orderNumber, $context) {
+        require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR . 'vmpayment/reepay/reepay/helpers/reepay_method_resolver.php';
+
+        $resolved = ReepayMethodResolver::resolve(
+            $requestPm,
+            is_object($payment_data) ? $payment_data->virtuemart_paymentmethod_id : null
+        );
+
+        if ($resolved['id'] === null) {
+            $this->logWebhook('Rejected (' . $context . '): no Frisbii payment stored for invoice=' . $orderNumber . ', pm=' . (int) $requestPm, 'warning');
+            return null;
+        }
+
+        $method = $this->getVmPluginMethod($resolved['id']);
+        if (!$method || !$this->selectedThisElement($method->payment_element)) {
+            $this->logWebhook('Rejected (' . $context . '): payment method ' . $resolved['id'] . ' of invoice=' . $orderNumber . ' is not an available Frisbii method, pm=' . (int) $requestPm, 'warning');
+            return null;
+        }
+
+        if ($resolved['pmMismatch']) {
+            $this->logWebhook('Note (' . $context . '): pm=' . (int) $requestPm . ' differs from the payment method ' . $resolved['id'] . ' stored on invoice=' . $orderNumber . '; using the stored method', 'warning');
+        }
+
+        return $method;
     }
 
     /**
@@ -632,6 +777,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
     public function plgVmOnUpdateOrderPayment(&$order, $old_order_status) {
 
           require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR .'vmpayment/reepay/reepay/helpers/reepay_service.php';
+          require_once VMPATH_PLUGINS . DIRECTORY_SEPARATOR .'vmpayment/reepay/reepay/helpers/reepay_invoice_status.php';
 
       if (! ($method = $this->getVmPluginMethod($order->virtuemart_paymentmethod_id))) {
             return NULL; // Another method was selected, do nothing
@@ -654,8 +800,15 @@ class plgVmPaymentReepay extends vmPSPlugin {
           $modelOrder = VmModel::getModel('orders');
 
           if ($order->order_status == $method->status_refunded && 'settled' == $invoice['body']['state']) {
-              vmdebug('attempt to refund on Frisbii Payments gateway', ['invoice' => $order->order_number, 'amount' => $order->paid]);
-              $result = $reepayService->refund($order->order_number, $order->order_total);
+              // Refund only what is left on the invoice (in the invoice currency), not the order total
+              $refundableMinor = ReepayInvoiceStatus::refundableMinor($invoice['body']);
+              if ($refundableMinor <= 0) {
+                  JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMENT_REEPAY_ORDER_REFUND_NOTHING_LEFT'), 'notice');
+                  vmdebug('nothing left to refund on Frisbii Payments gateway', ['invoice' => $order->order_number]);
+                  return NULL;
+              }
+              vmdebug('attempt to refund on Frisbii Payments gateway', ['invoice' => $order->order_number, 'amount_minor' => $refundableMinor]);
+              $result = $reepayService->refund($order->order_number, $refundableMinor / 100);
               if ($result['status'] == 'success') {
                   JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMENT_REEPAY_ORDER_REFUND_FLASH_MESSAGE_SUCCESS'));
                    $orderHistory['comments'] = vmText::_('VMPAYMENT_REEPAY_ORDER_REFUND_FLASH_MESSAGE_SUCCESS');
@@ -671,7 +824,7 @@ class plgVmPaymentReepay extends vmPSPlugin {
           if ($order->order_status == $method->status_settled && 'authorized' == $invoice['body']['state']) {
               vmdebug('attempt to settle on Frisbii Payments gateway', ['invoice' => $order->order_number, 'amount' => $order->order_total]);
               $result = $reepayService->settle($order->order_number, $order->order_total);
-              if ($result['status'] == 'success') {
+              if (ReepayInvoiceStatus::settleSucceeded($result)) {
                   JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMENT_REEPAY_ORDER_SETTLE_FLASH_MESSAGE_SUCCESS'));
 
                   $orderHistory['comments'] = vmText::_('VMPAYMENT_REEPAY_ORDER_SETTLE_FLASH_MESSAGE_SUCCESS');
@@ -680,8 +833,10 @@ class plgVmPaymentReepay extends vmPSPlugin {
 
                   vmdebug('settle was successful on Frisbii Payments gateway');
               } else {
-                  vmdebug('settle failed on Frisbii Payments gateway ', $result['error']);
-                  JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMETN_REEPAY_ORDER_SETTLE_FLASH_MESSAGE_FAIL') . $result['error'], 'warning');
+                  // HTTP success with another charge state (e.g. an expired authorization -> "failed") is a failure too
+                  $reason = $result['error'] ?? (' (state: ' . ($result['body']['state'] ?? 'unknown') . ')');
+                  vmdebug('settle failed on Frisbii Payments gateway ', $reason);
+                  JFactory::getApplication()->enqueueMessage(vmText::_('VMPAYMETN_REEPAY_ORDER_SETTLE_FLASH_MESSAGE_FAIL') . $reason, 'warning');
               }
           }
 

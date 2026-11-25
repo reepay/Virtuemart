@@ -48,7 +48,8 @@ class ReepayWebhookVerifierTest extends TestCase
         });
 
         $this->assertFalse($verifier->verify($payload));
-        $this->assertSame(1, $store->invalidateCallCount);
+        // One refresh, saved in a single write (no separate invalidate write when the fetch works)
+        $this->assertSame(0, $store->invalidateCallCount);
         $this->assertSame(1, $store->setCachedSecretCallCount);
     }
 
@@ -105,8 +106,121 @@ class ReepayWebhookVerifierTest extends TestCase
         });
 
         $this->assertTrue($verifier->verify($payload));
-        $this->assertSame(1, $store->invalidateCallCount);
+        $this->assertSame(0, $store->invalidateCallCount);
         $this->assertSame(1, $store->setCachedSecretCallCount);
         $this->assertSame(600, $store->lastTtlSeconds, 'the refreshed secret must be cached for no longer than 10 minutes');
+    }
+
+    // -------------------------------------------------------------------------
+    // Refresh limit: forged webhooks must not trigger an API call + DB write each
+    // -------------------------------------------------------------------------
+
+    private function verifierAt(FakeSecretStore $store, callable $fetcher)
+    {
+        return new ReepayWebhookVerifier($store, $fetcher, function () use ($store) {
+            return $store->clock;
+        });
+    }
+
+    public function testForgedWebhookWithinTheRefreshIntervalIsRejectedWithoutRefetch()
+    {
+        $store = new FakeSecretStore('cached-secret');
+        $store->lastRefreshAt = $store->clock - 10; // refreshed 10 s ago
+        $fetcherCalls = 0;
+        $verifier = $this->verifierAt($store, function () use (&$fetcherCalls) {
+            $fetcherCalls++;
+            return 'cached-secret';
+        });
+
+        $this->assertFalse($verifier->verify($this->payload(['signature' => 'forged'])));
+        $this->assertSame(0, $fetcherCalls, 'no Frisbii API call within the refresh interval');
+        $this->assertSame(0, $store->setCachedSecretCallCount, 'no DB write within the refresh interval');
+        $this->assertSame(0, $store->invalidateCallCount, 'no DB write within the refresh interval');
+        $this->assertTrue($verifier->refreshSkipped());
+    }
+
+    public function testForgedWebhookAfterTheRefreshIntervalRefreshesOnce()
+    {
+        $store = new FakeSecretStore('cached-secret');
+        $store->lastRefreshAt = $store->clock - ReepayWebhookVerifier::REFRESH_MIN_INTERVAL;
+        $fetcherCalls = 0;
+        $verifier = $this->verifierAt($store, function () use (&$fetcherCalls) {
+            $fetcherCalls++;
+            return 'cached-secret';
+        });
+
+        $this->assertFalse($verifier->verify($this->payload(['signature' => 'forged'])));
+        $this->assertSame(1, $fetcherCalls);
+        $this->assertSame(1, $store->setCachedSecretCallCount);
+        $this->assertFalse($verifier->refreshSkipped());
+    }
+
+    public function testTenForgedWebhooksWithinAMinuteFetchTheSecretAtMostOnce()
+    {
+        $store = new FakeSecretStore('cached-secret');
+        $fetcherCalls = 0;
+        $verifier = $this->verifierAt($store, function () use (&$fetcherCalls) {
+            $fetcherCalls++;
+            return 'cached-secret';
+        });
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->assertFalse($verifier->verify($this->payload(['id' => 'evt_' . $i, 'signature' => 'forged'])));
+            $store->clock += 5;
+        }
+
+        $this->assertSame(1, $fetcherCalls, '10 forged webhooks in 50 s may cause at most 1 Frisbii API call');
+        $this->assertSame(1, $store->setCachedSecretCallCount + $store->invalidateCallCount, 'and at most 1 DB write');
+    }
+
+    public function testRealRotationAfterTheRefreshIntervalIsAccepted()
+    {
+        $newSecret = 'rotated-secret';
+        $payload = $this->payload();
+        $payload['signature'] = $this->signFor($payload['timestamp'], $payload['id'], $newSecret);
+
+        $store = new FakeSecretStore('old-secret');
+        $store->lastRefreshAt = $store->clock - 120;
+        $verifier = $this->verifierAt($store, function () use ($newSecret) {
+            return $newSecret;
+        });
+
+        $this->assertTrue($verifier->verify($payload));
+        $this->assertSame($newSecret, $store->secret);
+    }
+
+    public function testFailedRefreshIsAlsoLimited()
+    {
+        $store = new FakeSecretStore('cached-secret');
+        $fetcherCalls = 0;
+        $verifier = $this->verifierAt($store, function () use (&$fetcherCalls) {
+            $fetcherCalls++;
+            return null; // Frisbii API unavailable
+        });
+
+        $this->assertFalse($verifier->verify($this->payload(['signature' => 'forged'])));
+        $this->assertSame(1, $fetcherCalls);
+        $this->assertSame(1, $store->invalidateCallCount, 'a failed refresh clears the cache (fail closed)');
+
+        $store->clock += 30;
+        $this->assertFalse($verifier->verify($this->payload(['signature' => 'forged'])));
+        $this->assertSame(1, $fetcherCalls, 'no new API call within the interval even after a failed refresh');
+        $this->assertTrue($verifier->refreshSkipped());
+    }
+
+    public function testValidSignatureWithCachedSecretIsAcceptedInsideTheInterval()
+    {
+        $secret = 'cached-secret';
+        $payload = $this->payload();
+        $payload['signature'] = $this->signFor($payload['timestamp'], $payload['id'], $secret);
+
+        $store = new FakeSecretStore($secret);
+        $store->lastRefreshAt = $store->clock - 1;
+        $verifier = $this->verifierAt($store, function () {
+            return 'should-not-be-used';
+        });
+
+        $this->assertTrue($verifier->verify($payload));
+        $this->assertFalse($verifier->refreshSkipped());
     }
 }

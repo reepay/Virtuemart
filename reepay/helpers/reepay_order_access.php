@@ -70,13 +70,21 @@ class ReepayOrderAccess
      */
     public static function orderLink($tracking, $orderNumber, $orderPass, $orderUserId)
     {
-        if ($tracking === 'none' || ($tracking === 'registered' && empty($orderUserId))) {
+        $isGuestOrder = empty($orderUserId);
+
+        if ($tracking === 'none') {
+            return '';
+        }
+
+        if ($tracking === 'registered' && $isGuestOrder) {
             return '';
         }
 
         $link = 'index.php?option=com_virtuemart&view=orders&layout=details&order_number=' . $orderNumber;
 
-        if ($tracking === 'guestlink' || ($tracking === 'guests' && empty($orderUserId))) {
+        $guestNeedsPass = $tracking === 'guests' && $isGuestOrder;
+
+        if ($tracking === 'guestlink' || $guestNeedsPass) {
             $link .= '&order_pass=' . $orderPass;
         }
 

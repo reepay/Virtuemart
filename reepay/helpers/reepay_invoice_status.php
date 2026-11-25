@@ -5,7 +5,7 @@
  * payment method's instant-settle setting.
  *
  * Frisbii keeps a refunded invoice in the state "settled" and reports refunds only in
- * refunded_amount (minor units), so a refund is full only when refunded_amount >= amount.
+ * refunded_amount (minor units), so a refund is full only when all that was settled is refunded.
  *
  * Pure functions: no Joomla/VirtueMart dependencies, so they can be unit tested.
  */
@@ -17,14 +17,14 @@ class ReepayInvoiceStatus
     const PARTIALLY_REFUNDED = 'partially_refunded';
 
     /**
-     * @param array $invoiceBody The 'body' of ReepayService::getInvoice() (state, amount, refunded_amount).
+     * @param array $invoiceBody The 'body' of ReepayService::getInvoice() (state, amount, settled_amount, refunded_amount).
      * @return array{kind:string, payment_status:string}|null null for states this plugin doesn't map
      *         (created, pending, failed, cancelled, ...).
      */
     public static function fromInvoice(array $invoiceBody)
     {
         $state    = $invoiceBody['state'] ?? null;
-        $amount   = (int) ($invoiceBody['amount'] ?? 0);
+        $settled  = self::settledMinor($invoiceBody);
         $refunded = (int) ($invoiceBody['refunded_amount'] ?? 0);
 
         if ($state === 'authorized') {
@@ -32,7 +32,7 @@ class ReepayInvoiceStatus
         }
 
         if ($state === 'settled') {
-            if ($refunded > 0 && $refunded >= $amount) {
+            if ($refunded > 0 && $refunded >= $settled) {
                 return ['kind' => self::REFUNDED, 'payment_status' => 'refunded'];
             }
             if ($refunded > 0) {
@@ -116,9 +116,21 @@ class ReepayInvoiceStatus
      */
     public static function refundableMinor(array $invoiceBody)
     {
-        $left = (int) ($invoiceBody['amount'] ?? 0) - (int) ($invoiceBody['refunded_amount'] ?? 0);
+        $returned = (int) ($invoiceBody['refunded_amount'] ?? 0) + (int) ($invoiceBody['credited_amount'] ?? 0);
 
-        return max(0, $left);
+        return max(0, self::settledMinor($invoiceBody) - $returned);
+    }
+
+    /**
+     * Amount (minor units) that was settled. It can be lower than the invoice amount after a
+     * partial settle, and is not reduced by refunds.
+     *
+     * @param array $invoiceBody
+     * @return int
+     */
+    public static function settledMinor(array $invoiceBody)
+    {
+        return (int) ($invoiceBody['settled_amount'] ?? $invoiceBody['amount'] ?? 0);
     }
 
     /**

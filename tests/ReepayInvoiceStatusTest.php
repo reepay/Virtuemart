@@ -153,6 +153,28 @@ class ReepayInvoiceStatusTest extends TestCase
         $this->assertSame(0, ReepayInvoiceStatus::refundableMinor([]));
     }
 
+    public function testRefundableAmountIsLimitedToWhatWasSettled(): void
+    {
+        $partly = ['state' => 'settled', 'amount' => 10000, 'settled_amount' => 6000];
+        $this->assertSame(6000, ReepayInvoiceStatus::refundableMinor($partly));
+        $this->assertSame(4000, ReepayInvoiceStatus::refundableMinor($partly + ['refunded_amount' => 2000]));
+        $this->assertSame(0, ReepayInvoiceStatus::refundableMinor($partly + ['refunded_amount' => 6000]));
+        $this->assertSame(0, ReepayInvoiceStatus::refundableMinor(['amount' => 10000, 'settled_amount' => 0]), 'nothing settled');
+    }
+
+    public function testCreditedAmountCannotBeRefundedAgain(): void
+    {
+        $body = ['amount' => 10000, 'settled_amount' => 10000, 'refunded_amount' => 2000, 'credited_amount' => 3000];
+        $this->assertSame(5000, ReepayInvoiceStatus::refundableMinor($body));
+    }
+
+    public function testRefundingAllThatWasSettledIsAFullRefund(): void
+    {
+        $partly = ['state' => 'settled', 'amount' => 10000, 'settled_amount' => 6000];
+        $this->assertSame(ReepayInvoiceStatus::REFUNDED, ReepayInvoiceStatus::fromInvoice($partly + ['refunded_amount' => 6000])['kind']);
+        $this->assertSame(ReepayInvoiceStatus::PARTIALLY_REFUNDED, ReepayInvoiceStatus::fromInvoice($partly + ['refunded_amount' => 5999])['kind']);
+    }
+
     public function testSettleIsOnlySuccessfulWhenFrisbiiReportsSettled(): void
     {
         $this->assertTrue(ReepayInvoiceStatus::settleSucceeded(['status' => 'success', 'body' => ['state' => 'settled']]));
